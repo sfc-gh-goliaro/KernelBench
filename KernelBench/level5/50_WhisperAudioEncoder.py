@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Whisper-style Audio Encoder.
@@ -100,7 +107,16 @@ n_state = 512
 n_head = 8
 n_layer = 6
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     mel = torch.randn(batch_size, n_mels, time_frames)
     return [mel]
 

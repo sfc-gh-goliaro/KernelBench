@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Fused Bias + Activation Functions.
@@ -218,7 +225,16 @@ batch_size = 32
 seq_len = 2048
 dim = 4096
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.randn(batch_size, seq_len, dim)]
 
 def get_init_inputs():

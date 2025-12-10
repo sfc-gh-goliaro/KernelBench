@@ -5,6 +5,13 @@ from typing import List, Optional, Callable
 import threading
 from queue import Queue
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Asynchronous Communication for Compute-Communication Overlap.
@@ -236,7 +243,16 @@ world_size = 8
 rank = 0
 tensor_shape = (1024, 1024)
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     compute_fn = lambda: torch.randn(*tensor_shape) @ torch.randn(*tensor_shape)
     tensors_to_communicate = [torch.randn(*tensor_shape) for _ in range(4)]
     communication_fn = lambda x: x  # Placeholder

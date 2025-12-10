@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Tensor Parallel Multi-Head Attention.
@@ -149,7 +156,16 @@ num_heads = 32
 world_size = 8
 rank = 0
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.randn(batch_size, seq_len, dim)]
 
 def get_init_inputs():

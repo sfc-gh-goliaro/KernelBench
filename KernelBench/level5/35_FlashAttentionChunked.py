@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Flash Attention-style Chunked Computation.
@@ -124,7 +131,16 @@ seq_len = 2048
 head_dim = 64
 block_size = 64
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     q = torch.randn(batch_size, num_heads, seq_len, head_dim)
     k = torch.randn(batch_size, num_heads, seq_len, head_dim)
     v = torch.randn(batch_size, num_heads, seq_len, head_dim)

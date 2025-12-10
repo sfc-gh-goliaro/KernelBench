@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     EAGLE (Extrapolation Algorithm for Greater Language-model Efficiency) Drafting.
@@ -114,7 +121,16 @@ num_layers = 1
 num_heads = 8
 num_draft = 6
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     hidden_states = torch.randn(batch_size, seq_len, hidden_dim)
     input_embeds = torch.randn(batch_size, seq_len, hidden_dim)
     return [hidden_states, input_embeds, num_draft]

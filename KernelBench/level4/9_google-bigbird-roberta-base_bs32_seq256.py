@@ -2,6 +2,13 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoConfig
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(torch.nn.Module):
     def __init__(self, model_name, config):
         super().__init__()
@@ -18,7 +25,16 @@ vocab_size = config.vocab_size
 sequence_length = 256
 batch_size = 32
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     inputs = torch.randint(0, vocab_size, (batch_size, sequence_length))
     return [inputs]
 

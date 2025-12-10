@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'relative',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     Adaptive Layer Normalization (AdaLN / AdaLN-Zero).
@@ -78,7 +85,16 @@ seq_len = 256  # e.g., image patches
 dim = 1152     # DiT-XL dimension
 cond_dim = 1152
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.randn(batch_size, seq_len, dim)
     cond = torch.randn(batch_size, cond_dim)  # e.g., timestep embedding
     return [x, cond]

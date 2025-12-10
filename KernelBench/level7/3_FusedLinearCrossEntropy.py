@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Fused Linear + Cross Entropy Loss (The "Unsloth" Layer).
@@ -182,7 +189,16 @@ seq_len = 2048
 hidden_dim = 4096
 vocab_size = 128000  # Large vocabulary
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     hidden_states = torch.randn(batch_size, seq_len, hidden_dim)
     labels = torch.randint(0, vocab_size, (batch_size, seq_len))
     return [hidden_states, labels]

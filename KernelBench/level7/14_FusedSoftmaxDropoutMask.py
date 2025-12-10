@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Fused Softmax + Dropout + Mask Application.
@@ -239,7 +246,16 @@ num_heads = 32
 seq_len_q = 2048
 seq_len_k = 2048
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     scores = torch.randn(batch_size, num_heads, seq_len_q, seq_len_k)
     # Causal mask
     attention_mask = torch.triu(

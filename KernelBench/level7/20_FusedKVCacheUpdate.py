@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Fused KV Cache Update + Attention.
@@ -205,7 +212,16 @@ head_dim = 128
 max_seq_len = 4096
 seq_new = 1  # Decode one token
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     q = torch.randn(batch_size, num_heads, seq_new, head_dim)
     k_new = torch.randn(batch_size, num_kv_heads, seq_new, head_dim)
     v_new = torch.randn(batch_size, num_kv_heads, seq_new, head_dim)

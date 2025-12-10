@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Diffusion Transformer (DiT) Block.
@@ -105,7 +112,16 @@ seq_len = 256  # 16x16 patches
 dim = 1152     # DiT-XL
 num_heads = 16
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.randn(batch_size, seq_len, dim)
     cond = torch.randn(batch_size, dim)  # Timestep + class embedding
     return [x, cond]

@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Expert Parallelism Communication for MoE.
@@ -190,7 +197,16 @@ hidden_dim = 512
 expert_dim = 2048
 tokens_per_rank = 256
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Tokens from each rank
     all_tokens = [torch.randn(tokens_per_rank, hidden_dim) for _ in range(world_size)]
     # Random expert assignments

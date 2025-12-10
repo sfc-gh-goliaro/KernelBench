@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     All-Gather Collective Communication.
@@ -75,7 +82,16 @@ batch_per_rank = 32
 seq_len = 512
 hidden_dim = 1024
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Each rank has a portion of the batch
     tensors = [torch.randn(batch_per_rank, seq_len, hidden_dim) for _ in range(world_size)]
     return [tensors]

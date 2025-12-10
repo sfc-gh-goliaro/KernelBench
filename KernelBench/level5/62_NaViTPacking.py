@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     NaViT-style Patch Packing for Variable Resolution Images.
@@ -119,7 +126,16 @@ patch_size = 14
 # Packed sequence from multiple images of different sizes
 seq_len = 512  # Total patches from all images
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     packed_patches = torch.randn(batch_size, seq_len, embed_dim)
     packed_pos = torch.randn(batch_size, seq_len, embed_dim)
     # Image IDs: first 256 patches from image 0, rest from image 1

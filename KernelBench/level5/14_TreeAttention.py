@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Tree Attention for Speculative Decoding.
@@ -127,7 +134,16 @@ max_tree_width = 4
 max_tree_depth = 5
 num_draft = 16  # Total nodes in speculation tree
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Prefix KV cache
     head_dim = dim // num_heads
     prefix_keys = torch.randn(batch_size, num_heads, prefix_len, head_dim)

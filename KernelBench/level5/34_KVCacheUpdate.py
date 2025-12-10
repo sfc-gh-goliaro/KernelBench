@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     KV Cache Update Operations for autoregressive inference.
@@ -130,7 +137,16 @@ max_seq_len = 2048
 batch_size = 8
 layer_idx = 0
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     new_k = torch.randn(batch_size, num_heads, 1, head_dim)  # Single token
     new_v = torch.randn(batch_size, num_heads, 1, head_dim)
     return [layer_idx, new_k, new_v]

@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     CLIP-style Contrastive Learning Module.
@@ -90,7 +97,16 @@ image_dim = 2048  # e.g., from ResNet
 text_dim = 768    # e.g., from BERT
 embed_dim = 512
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     image_features = torch.randn(batch_size, image_dim)
     text_features = torch.randn(batch_size, text_dim)
     return [image_features, text_features]

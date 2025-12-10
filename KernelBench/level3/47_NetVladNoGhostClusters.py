@@ -25,6 +25,13 @@ import torch.nn.functional as F
 import torch as th
 
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     def __init__(self, cluster_size, feature_size, ghost_clusters):
         super(Model, self).__init__()
@@ -91,7 +98,16 @@ num_clusters = 32
 feature_size = 512
 ghost_clusters = 0
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
   return [torch.rand(batch_size, num_features, feature_size)]
 
 def get_init_inputs():

@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Performs a standard 3D convolution operation with a square input and an asymmetric kernel.
@@ -40,7 +47,16 @@ width = 64
 height = 64
 depth = 64
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.rand(batch_size, in_channels, width, height, depth)
     return [x]
 

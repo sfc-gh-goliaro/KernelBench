@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'relative',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     Fused Vision Encoder Patch Embedding + LayerNorm.
@@ -212,7 +219,16 @@ patch_size = 16
 in_channels = 3
 embed_dim = 768
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.randn(batch_size, in_channels, img_size, img_size)]
 
 def get_init_inputs():

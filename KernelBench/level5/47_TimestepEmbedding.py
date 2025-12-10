@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Timestep Embedding for Diffusion Models.
@@ -74,7 +81,16 @@ batch_size = 64
 dim = 1152
 freq_dim = 256
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Random timesteps in [0, 1000]
     t = torch.randint(0, 1000, (batch_size,)).float()
     return [t]

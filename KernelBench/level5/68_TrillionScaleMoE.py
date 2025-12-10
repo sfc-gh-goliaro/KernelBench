@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Trillion-Scale Mixture of Experts for Large Models.
@@ -163,7 +170,16 @@ hidden_dim = 2048
 num_experts = 256  # Large number of experts
 top_k = 4
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.randn(batch_size, seq_len, dim)]
 
 def get_init_inputs():

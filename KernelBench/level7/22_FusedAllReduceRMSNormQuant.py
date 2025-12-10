@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'relative',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     Fused AllReduce + RMSNorm + FP8 Quantization.
@@ -147,7 +154,16 @@ seq_len = 2048
 hidden_dim = 4096
 world_size = 8
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.randn(batch_size, seq_len, hidden_dim)
     return [x]
 

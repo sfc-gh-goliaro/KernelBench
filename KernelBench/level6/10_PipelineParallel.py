@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Dict, Tuple, Optional
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Pipeline Parallelism for Model Layers.
@@ -226,7 +233,16 @@ micro_batch_size = 32
 num_micro_batches = 8
 hidden_dim = 512
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Micro-batches for pipeline
     micro_batches = {
         i: torch.randn(micro_batch_size, hidden_dim)

@@ -1,6 +1,14 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'topk',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+    'topk_k': 10,
+}
+
 class Model(nn.Module):
     """
     A model that performs matrix multiplication, applies dropout, and then applies softmax.
@@ -28,7 +36,16 @@ in_features = 16384
 out_features = 16384
 dropout_p = 0.2
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_features)]
 
 def get_init_inputs():

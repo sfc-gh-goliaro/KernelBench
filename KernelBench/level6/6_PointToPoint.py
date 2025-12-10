@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple, Optional
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Point-to-Point (Send/Recv) Communication.
@@ -158,7 +165,16 @@ class PipelineSendRecv(nn.Module):
 world_size = 8
 tensor_shape = (256, 1024)
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Tensors for ring communication
     tensors = [torch.randn(*tensor_shape) for _ in range(world_size)]
     return [tensors]

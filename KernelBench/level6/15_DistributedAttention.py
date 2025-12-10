@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Distributed Attention Mechanisms.
@@ -225,7 +232,16 @@ world_size = 8
 rank = 0
 seq_per_rank = total_seq_len // world_size
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x_chunks = [torch.randn(batch_size, seq_per_rank, dim) for _ in range(world_size)]
     return [x_chunks]
 

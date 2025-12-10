@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Simple model that performs a gemm, swish, divide, clamp, tanh, and clamp operations.
@@ -28,7 +35,16 @@ batch_size = 1024
 in_features = 8192
 out_features = 8192
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_features)]
 
 def get_init_inputs():

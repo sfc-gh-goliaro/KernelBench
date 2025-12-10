@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Encoder-Decoder Cross-Attention for sequence-to-sequence models.
@@ -126,7 +133,16 @@ decoder_dim = 512
 encoder_dim = 512
 num_heads = 8
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     decoder_hidden = torch.randn(batch_size, dec_len, decoder_dim)
     encoder_output = torch.randn(batch_size, enc_len, encoder_dim)
     return [decoder_hidden, encoder_output]

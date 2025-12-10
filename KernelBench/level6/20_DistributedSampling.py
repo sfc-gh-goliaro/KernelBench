@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Distributed Token Sampling for Parallel Generation.
@@ -226,7 +233,16 @@ world_size = 8
 rank = 0
 batch_size = 32
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     # Local logits (for vocabulary partition)
     local_vocab = vocab_size // world_size
     local_logits = torch.randn(batch_size, local_vocab)

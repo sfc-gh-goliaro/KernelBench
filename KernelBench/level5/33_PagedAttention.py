@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Paged Attention for efficient KV cache management.
@@ -149,7 +156,16 @@ block_size = 16
 num_blocks = 256
 max_context = 512
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     q = torch.randn(batch_size, num_heads, 1, head_dim)
     # Block table: each sequence uses some blocks
     block_table = torch.randint(0, num_blocks // 2, (batch_size, max_context // block_size))

@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'relative',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     A model that computes Kullback-Leibler Divergence for comparing two distributions.
@@ -18,7 +25,16 @@ batch_size = 8192 * 2
 input_shape = (8192 * 2,)
 dim = 1
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     scale = torch.rand(())
     return [(torch.rand(batch_size, *input_shape)*scale).softmax(dim=-1), torch.rand(batch_size, *input_shape).softmax(dim=-1)]
 

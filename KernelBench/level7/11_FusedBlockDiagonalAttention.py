@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Fused Block-Diagonal Masked Attention.
@@ -202,7 +209,16 @@ dim = 2048
 num_heads = 16
 block_size = 512
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.randn(batch_size, seq_len, dim)
     # Create block boundaries for different sequence lengths
     block_boundaries = [(0, 512), (512, 1024), (1024, 1536), (1536, 2048)]

@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Flow Matching for continuous normalizing flows.
@@ -129,7 +136,16 @@ dim = 784  # e.g., flattened 28x28 image
 hidden_dim = 512
 num_layers = 4
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x_t = torch.randn(batch_size, dim)
     t = torch.rand(batch_size, 1)
     return [x_t, t]

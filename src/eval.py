@@ -22,6 +22,12 @@ import torch.nn as nn
 from pydantic import BaseModel
 
 from . import utils
+from .filters import (
+    COMPARISON_MODES,
+    get_comparison_fn,
+    run_anti_exploit_checks,
+    get_recommended_comparison_mode,
+)
 
 REPO_TOP_PATH = os.path.abspath(
     os.path.join(
@@ -119,10 +125,14 @@ class KernelExecResult(BaseModel):
 
 def load_original_model_and_inputs(
     model_original_src: str, context: dict
-) -> tuple[nn.Module, callable, callable]:
+) -> tuple[nn.Module, callable, callable, dict]:
     """
     Load class from original NN.module pytorch code
     this is pytorch reference and we feed that to model to see if there will be any improvement
+    
+    Returns:
+        tuple: (Model, get_init_inputs_fn, get_inputs_fn, task_config)
+        task_config is a dict with comparison settings, or empty dict if not defined
     """
 
     try:
@@ -141,7 +151,11 @@ def load_original_model_and_inputs(
     get_init_inputs_fn = context.get("get_init_inputs")
     get_inputs_fn = context.get("get_inputs")
     Model = context.get("Model")
-    return (Model, get_init_inputs_fn, get_inputs_fn)
+    
+    # Get task config if present (for comparison mode, tolerances, etc.)
+    task_config = context.get("TASK_CONFIG", {})
+    
+    return (Model, get_init_inputs_fn, get_inputs_fn, task_config)
 
 
 def load_custom_model_with_tempfile(model_custom_src, entry_point="ModelNew"):
@@ -455,9 +469,15 @@ def eval_kernel_against_ref(
         print(f"[Eval] Start Evalulation! on device: {device}")
         print("[Eval] Loading Original Model")
 
-    Model, get_init_inputs, get_inputs = load_original_model_and_inputs(
-        original_model_src, context
-    )
+    result = load_original_model_and_inputs(original_model_src, context)
+    if result is None:
+        return KernelExecResult(compiled=False, metadata={"error": "Failed to load original model"})
+    Model, get_init_inputs, get_inputs, task_config = result
+    
+    # Store task config in metadata for transparency
+    if task_config:
+        metadata["task_config"] = task_config
+    
     set_seed(seed_num)  # set seed for reproducible input
     init_inputs = get_init_inputs()
     
@@ -553,6 +573,9 @@ def eval_kernel_against_ref(
             device=device,
             backend=backend,
             precision=precision,
+            task_config=task_config,
+            model_cls_new=ModelNew,
+            init_inputs=init_inputs,
         )
     except Exception as e:
         # TODO: add metadata for runtime error e.g. error in launching kernel, illegal memory access, ...
@@ -689,11 +712,14 @@ def run_and_check_correctness(
     get_inputs_fn: callable,
     metadata: dict,
     num_correct_trials: int,
-    verbose: bool =False,
-    seed: int =42,
-    device: Optional[torch.device] =None,
-    backend: str ="cuda",
-    precision: torch.dtype =torch.float32,
+    verbose: bool = False,
+    seed: int = 42,
+    device: Optional[torch.device] = None,
+    backend: str = "cuda",
+    precision: torch.dtype = torch.float32,
+    task_config: Optional[dict] = None,
+    model_cls_new = None,
+    init_inputs: list = None,
 ) -> KernelExecResult:
     """
     run the model and check correctness,
@@ -703,8 +729,45 @@ def run_and_check_correctness(
     num_correct_trials: run the evalutation multiple times with (ideally) different random inputs to ensure correctness
     backend: backend type for handling dtype conversions
     precision: torch.dtype
+    task_config: optional dict with comparison_mode, atol, rtol overrides
+    model_cls_new: optional ModelNew class for anti-exploit weight checks
+    init_inputs: optional init inputs for anti-exploit checks
     """
     pass_count = 0
+    task_config = task_config or {}
+
+    # Get comparison mode and tolerances from task config
+    comparison_mode = task_config.get('comparison_mode', 'default')
+    compare_fn = get_comparison_fn(comparison_mode)
+    
+    # Get base tolerance, can be overridden by task config
+    base_tolerance = get_tolerance_for_precision(precision)
+    atol = task_config.get('atol', base_tolerance)
+    rtol = task_config.get('rtol', base_tolerance)
+    
+    if verbose and comparison_mode != 'default':
+        print(f"[Eval] Using comparison mode: {comparison_mode}")
+    
+    # Run anti-exploit checks on the new model
+    if verbose:
+        print("[Eval] Running anti-exploit checks")
+    try:
+        exploit_results = run_anti_exploit_checks(
+            new_model_instance,
+            get_inputs_fn,
+            model_cls=model_cls_new,
+            init_inputs=init_inputs,
+            num_trials=3,
+            device=str(device) if device else 'cuda',
+        )
+        if exploit_results.get('exploits_detected'):
+            metadata['exploit_warning'] = exploit_results
+            if verbose:
+                print(f"[WARN] Potential exploits detected: {exploit_results['exploit_warnings']}")
+    except Exception as e:
+        if verbose:
+            print(f"[WARN] Anti-exploit checks failed: {e}")
+        metadata['exploit_check_error'] = str(e)
 
     # Generate num_correct_trials seeds deterministically from the initial seed
     torch.manual_seed(seed)
@@ -755,21 +818,26 @@ def run_and_check_correctness(
                         compiled=True, correctness=False, metadata=metadata
                     )
 
-                # in torchbench, they use both precisions for atol and rtol
-                # kernelbench v0 and v0.1 uses fp32, atol = rtol = 1e-02
-                # now we will return the tolerance from get_tolerance_for_precision
-                tolerance = get_tolerance_for_precision(precision)
-                # check output value difference
-                if not torch.allclose(
-                    output, output_new, atol=tolerance, rtol=tolerance
-                ):  # fail
+                # Use the comparison function from task config (or default torch.allclose)
+                # Pass additional kwargs from task_config for modes that need them (e.g., topk_k)
+                comparison_kwargs = {k: v for k, v in task_config.items() 
+                                     if k not in ('comparison_mode', 'atol', 'rtol')}
+                
+                is_correct = compare_fn(
+                    output, output_new, 
+                    atol=atol, rtol=rtol,
+                    **comparison_kwargs
+                )
+                
+                if not is_correct:  # fail
                     max_diff = torch.max(torch.abs(output - output_new)).item()
                     avg_diff = torch.mean(torch.abs(output - output_new)).item()
                     metadata.setdefault("max_difference", []).append(f"{max_diff:.6f}")
                     metadata.setdefault("avg_difference", []).append(f"{avg_diff:.6f}")
                     metadata["correctness_issue"] = "Output mismatch"
+                    metadata["comparison_mode"] = comparison_mode
                     if verbose:
-                        print(f"[FAIL] trial {trial}: Output mismatch")
+                        print(f"[FAIL] trial {trial}: Output mismatch (mode: {comparison_mode})")
                 else:  # pass
                     pass_count += 1
                     if verbose:
@@ -800,6 +868,7 @@ def run_and_check_correctness(
 
     # put all the useful info here!
     metadata["correctness_trials"] = f"({pass_count} / {num_correct_trials})"
+    metadata["comparison_mode"] = comparison_mode
 
     if pass_count == num_correct_trials:
         return KernelExecResult(compiled=True, correctness=True, metadata=metadata)

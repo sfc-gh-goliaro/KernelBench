@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Expert Parallel Dispatch for Mixture of Experts.
@@ -124,7 +131,16 @@ hidden_dim = 2048
 num_experts = 8
 top_k = 2
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.randn(batch_size, seq_len, dim)
     # Generate random expert assignments
     expert_indices = torch.randint(0, num_experts, (batch_size, seq_len, top_k))

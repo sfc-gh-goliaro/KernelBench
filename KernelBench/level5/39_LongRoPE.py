@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     LongRoPE: Extended Rotary Position Embedding for Long Context.
@@ -128,7 +135,16 @@ head_dim = 128
 original_max_seq = 4096
 target_max_seq = 65536
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     q = torch.randn(batch_size, num_heads, seq_len, head_dim)
     k = torch.randn(batch_size, num_heads, seq_len, head_dim)
     return [q, k]

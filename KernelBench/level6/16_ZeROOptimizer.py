@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Dict, Iterator
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     ZeRO (Zero Redundancy Optimizer) Sharding.
@@ -216,7 +223,16 @@ world_size = 8
 rank = 0
 hidden_dim = 4096
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     gradients = {'layer.weight': torch.randn(1024, hidden_dim)}
     return [gradients]
 

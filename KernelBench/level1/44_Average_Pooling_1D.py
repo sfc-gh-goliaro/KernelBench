@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Simple model that performs 1D Average Pooling.
@@ -36,7 +43,16 @@ kernel_size = 8
 stride = 1
 padding = 4
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     x = torch.rand(batch_size, in_channels, input_length)
     return [x]
 
