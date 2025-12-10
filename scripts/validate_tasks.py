@@ -46,6 +46,7 @@ def validate_all_tasks(
     task_paths: List[str] = None,
     device: str = 'cuda',
     verbose: bool = False,
+    num_seeds: int = 3,
 ) -> Dict[str, Any]:
     """
     Validate all tasks and return results.
@@ -55,6 +56,7 @@ def validate_all_tasks(
         task_paths: Specific task paths to validate (overrides levels)
         device: Device to run validation on
         verbose: Print progress
+        num_seeds: Number of random seeds to use for each task
         
     Returns:
         Dict with validation results for each task
@@ -88,7 +90,7 @@ def validate_all_tasks(
             print(f"[{i+1}/{len(all_tasks)}] Validating {task_name}...")
         
         try:
-            task_result = validate_task(task_path, device=device)
+            task_result = validate_task(task_path, device=device, num_seeds=num_seeds)
             results['tasks'][task_name] = task_result
             
             if task_result.get('error'):
@@ -211,6 +213,12 @@ def main():
         action='store_true',
         help='Show code snippets to fix problematic tasks'
     )
+    parser.add_argument(
+        '--num-seeds', '-n',
+        type=int,
+        default=3,
+        help='Number of random seeds to use for each task (default: 3)'
+    )
     
     args = parser.parse_args()
     
@@ -232,12 +240,14 @@ def main():
     # Run validation
     print("Starting task validation...")
     print(f"Device: {args.device}")
+    print(f"Num seeds: {args.num_seeds}")
     
     results = validate_all_tasks(
         levels=levels,
         task_paths=task_paths,
         device=args.device,
         verbose=args.verbose,
+        num_seeds=args.num_seeds,
     )
     
     # Print summary

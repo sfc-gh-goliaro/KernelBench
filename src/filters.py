@@ -184,12 +184,22 @@ def set_seed(seed: int):
         torch.cuda.manual_seed(seed)
 
 
-def filter_output_range(model: torch.nn.Module, get_inputs: Callable,
-                        num_seeds: int = 5, device: str = 'cuda') -> bool:
+def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
+                    num_seeds: int = 3, device: str = 'cuda') -> torch.Tensor:
     """
-    Filter tasks whose outputs are always within (-0.01, 0.01).
+    Collect model outputs for multiple random seeds.
     
-    Returns True if task should be filtered (problematic).
+    This is the single point where model forward passes are executed.
+    All filter checks should use outputs from this function to avoid redundant computation.
+    
+    Args:
+        model: The model to run
+        get_inputs: Function to generate inputs
+        num_seeds: Number of different random seeds to use
+        device: Device to run on
+        
+    Returns:
+        Stacked tensor of shape (num_seeds, *output_shape)
     """
     outputs = []
     
@@ -202,100 +212,109 @@ def filter_output_range(model: torch.nn.Module, get_inputs: Callable,
             out = model(*inputs).float().cpu()
             outputs.append(out)
     
-    all_outputs = torch.stack(outputs)
-    # Check if ALL values are within (-0.01, 0.01)
-    filter_catch = ((all_outputs > -0.01) & (all_outputs < 0.01)).all()
-    
-    return bool(filter_catch)
+    return torch.stack(outputs)
 
 
-def filter_output_std(model: torch.nn.Module, get_inputs: Callable,
-                      num_seeds: int = 5, device: str = 'cuda') -> bool:
+# =============================================================================
+# FILTER ANALYSIS FUNCTIONS - Operate on pre-collected outputs (no model runs)
+# =============================================================================
+
+def analyze_output_range(all_outputs: torch.Tensor) -> bool:
     """
-    Filter tasks whose outputs don't vary enough across different seeds.
+    Check if all output values are within (-0.01, 0.01).
     
-    Returns True if task should be filtered (problematic).
-    """
-    outputs = []
-    
-    for seed in range(num_seeds):
-        set_seed(seed)
-        inputs = get_inputs()
-        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
+    Args:
+        all_outputs: Tensor of shape (num_seeds, *output_shape)
         
-        with torch.no_grad():
-            out = model(*inputs).float().cpu()
-            outputs.append(out)
+    Returns:
+        True if task should be filtered (problematic).
+    """
+    return bool(((all_outputs > -0.01) & (all_outputs < 0.01)).all())
+
+
+def analyze_output_std(all_outputs: torch.Tensor) -> bool:
+    """
+    Check if outputs don't vary enough across different seeds.
     
-    all_outputs = torch.stack(outputs)
+    Args:
+        all_outputs: Tensor of shape (num_seeds, *output_shape)
+        
+    Returns:
+        True if task should be filtered (problematic).
+    """
     stds = torch.std(all_outputs, dim=0)
-    filter_catch = (stds < 0.01).all()
-    
-    return bool(filter_catch)
+    return bool((stds < 0.01).all())
 
 
-def filter_output_axes(model: torch.nn.Module, get_inputs: Callable,
-                       num_seeds: int = 5, device: str = 'cuda') -> bool:
+def analyze_output_axes(all_outputs: torch.Tensor) -> bool:
     """
-    Filter tasks whose outputs don't vary enough across different axes.
+    Check if outputs don't vary enough across different axes.
     
-    Returns True if task should be filtered (problematic).
-    """
-    outputs = []
-    
-    for seed in range(num_seeds):
-        set_seed(seed)
-        inputs = get_inputs()
-        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
+    Args:
+        all_outputs: Tensor of shape (num_seeds, *output_shape)
         
-        with torch.no_grad():
-            out = model(*inputs).float().cpu()
-            outputs.append(out)
-    
-    all_outputs = torch.stack(outputs)
-    
-    # Calculate std across each axis
+    Returns:
+        True if task should be filtered (problematic).
+    """
     for axis in range(all_outputs.ndim):
         axis_std = torch.std(all_outputs, dim=axis)
         if (axis_std < 0.01).all():
             return True
-    
     return False
 
 
-def filter_input_impact(model: torch.nn.Module, get_inputs: Callable,
-                        num_seeds: int = 5, device: str = 'cuda') -> bool:
+def analyze_input_impact(all_outputs: torch.Tensor) -> bool:
     """
-    Filter tasks whose inputs don't affect the output.
+    Check if inputs don't affect the output (same output for different inputs).
     
-    Returns True if task should be filtered (problematic).
-    """
-    outputs = []
+    This is essentially the same as output_std since we use different seeds
+    which generate different inputs.
     
-    # Use same model, different inputs
-    set_seed(42)
-    
-    for seed in range(num_seeds):
-        set_seed(seed)
-        inputs = get_inputs()
-        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
+    Args:
+        all_outputs: Tensor of shape (num_seeds, *output_shape)
         
-        with torch.no_grad():
-            out = model(*inputs).float().cpu()
-            outputs.append(out)
-    
-    all_outputs = torch.stack(outputs)
-    stds = torch.std(all_outputs, dim=0)
-    filter_catch = (stds < 0.01).all()
-    
-    return bool(filter_catch)
-
-
-def validate_task(task_path: str, device: str = 'cuda') -> Dict[str, Any]:
+    Returns:
+        True if task should be filtered (problematic).
     """
-    Run all validation filters on a task.
+    stds = torch.std(all_outputs, dim=0)
+    return bool((stds < 0.01).all())
+
+
+def run_all_filters(all_outputs: torch.Tensor) -> Dict[str, bool]:
+    """
+    Run all filter analyses on pre-collected outputs.
     
-    Returns dict with filter results and recommendations.
+    This is the efficient way to run filters - collect outputs once,
+    then run all analyses on the same data.
+    
+    Args:
+        all_outputs: Tensor of shape (num_seeds, *output_shape)
+        
+    Returns:
+        Dict mapping filter names to results (True = problematic)
+    """
+    return {
+        'output_range': analyze_output_range(all_outputs),
+        'output_std': analyze_output_std(all_outputs),
+        'output_axes': analyze_output_axes(all_outputs),
+        'input_impact': analyze_input_impact(all_outputs),
+    }
+
+
+def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3) -> Dict[str, Any]:
+    """
+    Run all validation filters on a task efficiently.
+    
+    Collects outputs ONCE and runs all filter analyses on the same data.
+    This is 4x faster than running each filter separately.
+    
+    Args:
+        task_path: Path to the task Python file
+        device: Device to run on ('cuda' or 'cpu')
+        num_seeds: Number of random seeds to use
+        
+    Returns:
+        Dict with filter results and recommendations
     """
     # Load task module
     spec = importlib.util.spec_from_file_location("task_module", task_path)
@@ -323,11 +342,11 @@ def validate_task(task_path: str, device: str = 'cuda') -> Dict[str, Any]:
     }
     
     try:
-        # Run filters
-        results['filters']['output_range'] = filter_output_range(model, get_inputs, device=device)
-        results['filters']['output_std'] = filter_output_std(model, get_inputs, device=device)
-        results['filters']['output_axes'] = filter_output_axes(model, get_inputs, device=device)
-        results['filters']['input_impact'] = filter_input_impact(model, get_inputs, device=device)
+        # Collect outputs ONCE - this is where all model forward passes happen
+        all_outputs = collect_outputs(model, get_inputs, num_seeds, device)
+        
+        # Run all filter analyses on the collected outputs (no model runs here)
+        results['filters'] = run_all_filters(all_outputs)
         
         # Generate recommendations
         if results['filters']['output_range']:
@@ -376,56 +395,26 @@ def check_constant_output(outputs: List[torch.Tensor], threshold: float = 1e-6) 
     return std < threshold
 
 
-def check_ignores_input(model: torch.nn.Module, get_inputs: Callable,
-                        num_trials: int = 3, device: str = 'cuda') -> bool:
-    """
-    Check if model ignores input variations (same output for different inputs).
-    
-    Returns True if exploit detected.
-    """
-    outputs = []
-    
-    for seed in range(num_trials):
-        set_seed(seed * 1000)  # Use different seeds
-        inputs = get_inputs()
-        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
-        
-        with torch.no_grad():
-            out = model(*inputs).cpu()
-            outputs.append(out)
-    
-    return check_constant_output(outputs)
-
-
-def check_ignores_weights(model_cls, init_inputs: List, inputs: List,
-                          num_seeds: int = 3, device: str = 'cuda') -> bool:
-    """
-    Check if model output is independent of weight initialization.
-    
-    Returns True if exploit detected.
-    """
-    outputs = []
-    
-    for seed in range(num_seeds):
-        set_seed(seed * 1000)
-        model = model_cls(*init_inputs).to(device).eval()
-        
-        inputs_device = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
-        
-        with torch.no_grad():
-            out = model(*inputs_device).cpu()
-            outputs.append(out)
-    
-    return check_constant_output(outputs)
-
-
 def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
                             model_cls=None, init_inputs: List = None,
                             num_trials: int = 3, device: str = 'cuda') -> Dict[str, Any]:
     """
-    Run all anti-exploit checks on a model.
+    Run all anti-exploit checks on a model efficiently.
     
-    Returns dict with check results and overall exploit detection flag.
+    Minimizes model runs by:
+    1. Collecting outputs once for input variation check
+    2. Reusing outputs where possible
+    
+    Args:
+        model: The model to check
+        get_inputs: Function to generate inputs
+        model_cls: Optional model class for weight independence check
+        init_inputs: Optional init inputs for weight independence check
+        num_trials: Number of trials for each check
+        device: Device to run on
+        
+    Returns:
+        Dict with check results and overall exploit detection flag
     """
     results = {
         'checks': {},
@@ -434,46 +423,52 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
     }
     
     try:
-        # Get sample output
-        set_seed(42)
-        inputs = get_inputs()
-        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
+        # Collect outputs for multiple random inputs - single batch of model runs
+        outputs = []
+        for seed in range(num_trials):
+            set_seed(seed * 1000)
+            inputs = get_inputs()
+            inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
+            
+            with torch.no_grad():
+                out = model(*inputs).cpu()
+                outputs.append(out)
         
-        with torch.no_grad():
-            sample_output = model(*inputs).cpu()
-        
-        # Check 1: Always zero
-        always_zero = check_always_zero(sample_output)
+        # Check 1: Always zero (use first output)
+        always_zero = check_always_zero(outputs[0])
         results['checks']['always_zero'] = always_zero
         if always_zero:
             results['exploit_warnings'].append("Output is always near zero")
         
-        # Check 2: Ignores input
-        ignores_input = check_ignores_input(model, get_inputs, num_trials, device)
-        results['checks']['ignores_input'] = ignores_input
-        if ignores_input:
+        # Check 2 & 4: Ignores input / Constant output (same check, reuse outputs)
+        constant_output = check_constant_output(outputs)
+        results['checks']['ignores_input'] = constant_output
+        results['checks']['constant_output'] = constant_output
+        if constant_output:
             results['exploit_warnings'].append("Output ignores input variations")
         
-        # Check 3: Ignores weights (if model_cls provided)
+        # Check 3: Ignores weights (requires creating new model instances)
         if model_cls is not None and init_inputs is not None:
-            ignores_weights = check_ignores_weights(model_cls, init_inputs, inputs, num_trials, device)
+            weight_outputs = []
+            sample_inputs = outputs[0]  # Reuse inputs from first run conceptually
+            
+            # Need fresh inputs for fair comparison
+            set_seed(42)
+            fixed_inputs = get_inputs()
+            fixed_inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in fixed_inputs]
+            
+            for seed in range(num_trials):
+                set_seed(seed * 1000)
+                temp_model = model_cls(*init_inputs).to(device).eval()
+                
+                with torch.no_grad():
+                    out = temp_model(*fixed_inputs).cpu()
+                    weight_outputs.append(out)
+            
+            ignores_weights = check_constant_output(weight_outputs)
             results['checks']['ignores_weights'] = ignores_weights
             if ignores_weights:
                 results['exploit_warnings'].append("Output ignores weight variations")
-        
-        # Check 4: Constant output
-        outputs = []
-        for seed in range(num_trials):
-            set_seed(seed * 100)
-            trial_inputs = get_inputs()
-            trial_inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in trial_inputs]
-            with torch.no_grad():
-                outputs.append(model(*trial_inputs).cpu())
-        
-        constant_output = check_constant_output(outputs)
-        results['checks']['constant_output'] = constant_output
-        if constant_output:
-            results['exploit_warnings'].append("Output is constant across trials")
         
         results['exploits_detected'] = any(results['checks'].values())
         
@@ -514,4 +509,3 @@ def get_recommended_comparison_mode(task_name: str) -> str:
         return 'topk'
     
     return 'default'
-
