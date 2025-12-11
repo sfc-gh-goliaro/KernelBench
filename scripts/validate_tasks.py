@@ -160,11 +160,11 @@ def _process_task_result(results: Dict, task_name: str, task_result: Dict, verbo
         
         if verbose:
             rec = task_result.get('recommendation', {})
-            print(f"  {task_name}: PROBLEMATIC - {rec.get('comparison_mode', '?')}")
+            print(f"  {task_name}: PROBLEMATIC - recommend: {rec.get('comparison_mode', '?')}")
+            for suggestion in rec.get('suggestions', []):
+                print(f"    - {suggestion}")
     else:
         results['summary']['passed'] += 1
-        if verbose:
-            print(f"  {task_name}: OK")
 
 
 def validate_all_tasks(
