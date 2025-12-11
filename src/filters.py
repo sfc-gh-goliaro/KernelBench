@@ -369,6 +369,11 @@ def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3) -> D
     Returns:
         Dict with filter results and recommendations
     """
+    import gc
+    
+    model = None
+    all_outputs = None
+    
     # Load task module
     spec = importlib.util.spec_from_file_location("task_module", task_path)
     task_module = importlib.util.module_from_spec(spec)
@@ -418,6 +423,20 @@ def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3) -> D
     except Exception as e:
         results['error'] = str(e)
         results['is_problematic'] = True
+    
+    finally:
+        # Clean up GPU memory to prevent OOM across many tasks
+        if all_outputs is not None:
+            del all_outputs
+        if model is not None:
+            del model
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     return results
 
@@ -471,6 +490,12 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
     Returns:
         Dict with check results and overall exploit detection flag
     """
+    import gc
+    
+    outputs = []
+    weight_outputs = []
+    temp_model = None
+    
     results = {
         'checks': {},
         'exploits_detected': False,
@@ -480,7 +505,6 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
     try:
         # Collect outputs for multiple random inputs - single batch of model runs
         # Keep on GPU for fast analysis
-        outputs = []
         for seed in range(num_trials):
             set_seed(seed * 1000)
             inputs = get_inputs()
@@ -505,9 +529,6 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
         
         # Check 3: Ignores weights (requires creating new model instances)
         if model_cls is not None and init_inputs is not None:
-            weight_outputs = []
-            sample_inputs = outputs[0]  # Reuse inputs from first run conceptually
-            
             # Need fresh inputs for fair comparison
             set_seed(42)
             fixed_inputs = get_inputs()
@@ -520,6 +541,10 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
                 with torch.no_grad():
                     out = temp_model(*fixed_inputs)
                     weight_outputs.append(out)
+                
+                # Clean up temp model immediately
+                del temp_model
+                temp_model = None
             
             ignores_weights = check_constant_output(weight_outputs)
             results['checks']['ignores_weights'] = ignores_weights
@@ -530,6 +555,23 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
         
     except Exception as e:
         results['error'] = str(e)
+    
+    finally:
+        # Clean up GPU memory
+        for out in outputs:
+            del out
+        outputs.clear()
+        
+        for out in weight_outputs:
+            del out
+        weight_outputs.clear()
+        
+        if temp_model is not None:
+            del temp_model
+        
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     return results
 
