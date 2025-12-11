@@ -192,6 +192,9 @@ def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
     This is the single point where model forward passes are executed.
     All filter checks should use outputs from this function to avoid redundant computation.
     
+    IMPORTANT: Outputs are kept on GPU for fast analysis (variance, min, max).
+    Only scalar results are moved to CPU via .item().
+    
     Args:
         model: The model to run
         get_inputs: Function to generate inputs
@@ -199,7 +202,7 @@ def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
         device: Device to run on
         
     Returns:
-        Stacked tensor of shape (num_seeds, *output_shape)
+        Stacked tensor of shape (num_seeds, *output_shape) ON GPU
     """
     outputs = []
     
@@ -209,7 +212,8 @@ def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
         inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
         
         with torch.no_grad():
-            out = model(*inputs).float().cpu()
+            # Keep on GPU for fast analysis - don't call .cpu()!
+            out = model(*inputs).float()
             outputs.append(out)
     
     return torch.stack(outputs)
@@ -474,6 +478,7 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
     
     try:
         # Collect outputs for multiple random inputs - single batch of model runs
+        # Keep on GPU for fast analysis
         outputs = []
         for seed in range(num_trials):
             set_seed(seed * 1000)
@@ -481,7 +486,7 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
             inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
             
             with torch.no_grad():
-                out = model(*inputs).cpu()
+                out = model(*inputs)
                 outputs.append(out)
         
         # Check 1: Always zero (use first output)
@@ -512,7 +517,7 @@ def run_anti_exploit_checks(model: torch.nn.Module, get_inputs: Callable,
                 temp_model = model_cls(*init_inputs).to(device).eval()
                 
                 with torch.no_grad():
-                    out = temp_model(*fixed_inputs).cpu()
+                    out = temp_model(*fixed_inputs)
                     weight_outputs.append(out)
             
             ignores_weights = check_constant_output(weight_outputs)
