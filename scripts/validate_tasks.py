@@ -81,14 +81,15 @@ def validate_all_tasks(
     
     results['summary']['total'] = len(all_tasks)
     
-    for i, task_path in enumerate(all_tasks):
+    from tqdm import tqdm
+    
+    for task_path in tqdm(all_tasks, desc="Validating tasks"):
         task_name = os.path.basename(task_path)
-        
         if verbose:
-            print(f"[{i+1}/{len(all_tasks)}] Validating {task_name}...")
+            print(f"    Validating {task_name}...")
         
         try:
-            task_result = validate_task(task_path, device=device, verbose=verbose)
+            task_result = validate_task(task_path, device=device)
             results['tasks'][task_name] = task_result
             
             if task_result.get('error'):

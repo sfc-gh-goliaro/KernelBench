@@ -185,8 +185,7 @@ def set_seed(seed: int):
 
 
 def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
-                    num_seeds: int = 3, device: str = 'cuda',
-                    verbose: bool = False) -> torch.Tensor:
+                    num_seeds: int = 3, device: str = 'cuda') -> torch.Tensor:
     """
     Collect model outputs for multiple random seeds.
     
@@ -201,7 +200,6 @@ def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
         get_inputs: Function to generate inputs
         num_seeds: Number of different random seeds to use
         device: Device to run on
-        verbose: Print progress for debugging
         
     Returns:
         Stacked tensor of shape (num_seeds, *output_shape) ON GPU
@@ -209,24 +207,14 @@ def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
     outputs = []
     
     for seed in range(num_seeds):
-        if verbose:
-            print(f"    [seed {seed+1}/{num_seeds}] Setting seed...", flush=True)
         set_seed(seed)
-        if verbose:
-            print(f"    [seed {seed+1}/{num_seeds}] Generating inputs...", flush=True)
         inputs = get_inputs()
-        if verbose:
-            print(f"    [seed {seed+1}/{num_seeds}] Moving inputs to device...", flush=True)
         inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
         
-        if verbose:
-            print(f"    [seed {seed+1}/{num_seeds}] Running model forward...", flush=True)
         with torch.no_grad():
             # Keep on GPU for fast analysis - don't call .cpu()!
             out = model(*inputs).float()
             outputs.append(out)
-        if verbose:
-            print(f"    [seed {seed+1}/{num_seeds}] Done.", flush=True)
     
     return torch.stack(outputs)
 
@@ -325,7 +313,7 @@ def analyze_input_impact(all_outputs: torch.Tensor) -> bool:
     return analyze_output_std(all_outputs)
 
 
-def run_all_filters(all_outputs: torch.Tensor, verbose: bool = False) -> Dict[str, bool]:
+def run_all_filters(all_outputs: torch.Tensor) -> Dict[str, bool]:
     """
     Run all filter analyses on pre-collected outputs efficiently.
     
@@ -336,7 +324,6 @@ def run_all_filters(all_outputs: torch.Tensor, verbose: bool = False) -> Dict[st
     
     Args:
         all_outputs: Tensor of shape (num_seeds, *output_shape)
-        verbose: Print progress for debugging
         
     Returns:
         Dict mapping filter names to results (True = problematic)
@@ -345,30 +332,18 @@ def run_all_filters(all_outputs: torch.Tensor, verbose: bool = False) -> Dict[st
     
     # === Output Range Check ===
     # Global min/max - highly optimized single-pass CUDA kernels
-    if verbose:
-        print("    Computing global min/max...", flush=True)
     global_min = all_outputs.min().item()
     global_max = all_outputs.max().item()
-    if verbose:
-        print("    Compting in_range...", flush=True)
     in_range = (global_min > -0.01) and (global_max < 0.01)
     
     # === Variance Check (shared across std/axes/input_impact) ===
     flat = all_outputs.view(num_seeds, -1)
-    if verbose:
-        print("    Computing variance...", flush=True)
     # Compute variance ONCE across seeds for each position
     var = torch.var(flat, dim=0)
     
     # Use max reduction - if max(var) < threshold, all vars are below threshold
-    if verbose:
-        print("    Computing max variance...", flush=True)
     max_var = var.max().item()
-    if verbose:
-        print("    Computing low variance...", flush=True)
     low_var = max_var < _VAR_THRESHOLD
-    if verbose:
-        print("    Computing very low variance...", flush=True)
     very_low_var = max_var < _VAR_THRESHOLD * 10
     
     return {
@@ -379,8 +354,7 @@ def run_all_filters(all_outputs: torch.Tensor, verbose: bool = False) -> Dict[st
     }
 
 
-def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3,
-                  verbose: bool = False) -> Dict[str, Any]:
+def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3) -> Dict[str, Any]:
     """
     Run all validation filters on a task efficiently.
     
@@ -391,14 +365,11 @@ def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3,
         task_path: Path to the task Python file
         device: Device to run on ('cuda' or 'cpu')
         num_seeds: Number of random seeds to use
-        verbose: Print progress for debugging
         
     Returns:
         Dict with filter results and recommendations
     """
     # Load task module
-    if verbose:
-        print("  Loading task module...", flush=True)
     spec = importlib.util.spec_from_file_location("task_module", task_path)
     task_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(task_module)
@@ -411,20 +382,10 @@ def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3,
     task_config = getattr(task_module, 'TASK_CONFIG', {})
     
     # Initialize model
-    if verbose:
-        print("  Setting seed for init...", flush=True)
     set_seed(42)
-    if verbose:
-        print("  Getting init inputs...", flush=True)
     init_inputs = get_init_inputs()
-    if verbose:
-        print("  Creating model...", flush=True)
     model = Model(*init_inputs)
-    if verbose:
-        print("  Moving model to device...", flush=True)
     model = model.to(device)
-    if verbose:
-        print("  Setting model to eval mode...", flush=True)
     model = model.eval()
     
     results = {
@@ -437,16 +398,10 @@ def validate_task(task_path: str, device: str = 'cuda', num_seeds: int = 3,
     
     try:
         # Collect outputs ONCE - this is where all model forward passes happen
-        if verbose:
-            print("  Collecting outputs...", flush=True)
-        all_outputs = collect_outputs(model, get_inputs, num_seeds, device, verbose=verbose)
+        all_outputs = collect_outputs(model, get_inputs, num_seeds, device)
         
         # Run all filter analyses on the collected outputs (no model runs here)
-        if verbose:
-            print("  Running filter analyses...", flush=True)
-        results['filters'] = run_all_filters(all_outputs, verbose=verbose)
-        if verbose:
-            print("  Filter analyses complete.", flush=True)
+        results['filters'] = run_all_filters(all_outputs)
         
         # Generate recommendations
         if results['filters']['output_range']:
