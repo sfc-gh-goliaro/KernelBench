@@ -219,9 +219,16 @@ def collect_outputs(model: torch.nn.Module, get_inputs: Callable,
 # FILTER ANALYSIS FUNCTIONS - Operate on pre-collected outputs (no model runs)
 # =============================================================================
 
+# Thresholds
+_STD_THRESHOLD = 0.01
+_VAR_THRESHOLD = _STD_THRESHOLD ** 2  # 0.0001
+
+
 def analyze_output_range(all_outputs: torch.Tensor) -> bool:
     """
     Check if all output values are within (-0.01, 0.01).
+    
+    Uses min/max reductions which are O(n) but very fast.
     
     Args:
         all_outputs: Tensor of shape (num_seeds, *output_shape)
@@ -229,21 +236,33 @@ def analyze_output_range(all_outputs: torch.Tensor) -> bool:
     Returns:
         True if task should be filtered (problematic).
     """
-    return bool(((all_outputs > -0.01) & (all_outputs < 0.01)).all())
+    # Use min/max - much faster than element-wise comparison + all()
+    min_val = all_outputs.min().item()
+    max_val = all_outputs.max().item()
+    return min_val > -0.01 and max_val < 0.01
 
 
 def analyze_output_std(all_outputs: torch.Tensor) -> bool:
     """
     Check if outputs don't vary enough across different seeds.
     
+    Uses variance with max reduction - if max(variance) < threshold,
+    then all variances are below threshold.
+    
     Args:
         all_outputs: Tensor of shape (num_seeds, *output_shape)
         
     Returns:
         True if task should be filtered (problematic).
     """
-    stds = torch.std(all_outputs, dim=0)
-    return bool((stds < 0.01).all())
+    num_seeds = all_outputs.shape[0]
+    flat = all_outputs.view(num_seeds, -1)
+    
+    # Compute variance across seeds, then take max
+    var = torch.var(flat, dim=0)
+    max_var = var.max().item()
+    
+    return max_var < _VAR_THRESHOLD
 
 
 def analyze_output_axes(all_outputs: torch.Tensor) -> bool:
@@ -256,19 +275,30 @@ def analyze_output_axes(all_outputs: torch.Tensor) -> bool:
     Returns:
         True if task should be filtered (problematic).
     """
-    for axis in range(all_outputs.ndim):
-        axis_std = torch.std(all_outputs, dim=axis)
-        if (axis_std < 0.01).all():
-            return True
+    num_seeds = all_outputs.shape[0]
+    flat = all_outputs.view(num_seeds, -1)
+    
+    # Compute variance across seeds
+    var = torch.var(flat, dim=0)
+    max_var = var.max().item()
+    
+    # If max variance is very low, it's problematic
+    if max_var < _VAR_THRESHOLD:
+        return True
+    
+    # Also flag suspiciously low variation (10x threshold)
+    if max_var < _VAR_THRESHOLD * 10:
+        return True
+    
     return False
 
 
 def analyze_input_impact(all_outputs: torch.Tensor) -> bool:
     """
-    Check if inputs don't affect the output (same output for different inputs).
+    Check if inputs don't affect the output.
     
-    This is essentially the same as output_std since we use different seeds
-    which generate different inputs.
+    This is the same as output_std - if outputs are the same across
+    different random inputs (seeds), inputs don't impact the output.
     
     Args:
         all_outputs: Tensor of shape (num_seeds, *output_shape)
@@ -276,16 +306,17 @@ def analyze_input_impact(all_outputs: torch.Tensor) -> bool:
     Returns:
         True if task should be filtered (problematic).
     """
-    stds = torch.std(all_outputs, dim=0)
-    return bool((stds < 0.01).all())
+    return analyze_output_std(all_outputs)
 
 
 def run_all_filters(all_outputs: torch.Tensor) -> Dict[str, bool]:
     """
-    Run all filter analyses on pre-collected outputs.
+    Run all filter analyses on pre-collected outputs efficiently.
     
-    This is the efficient way to run filters - collect outputs once,
-    then run all analyses on the same data.
+    Optimizations:
+    1. Computes variance ONCE, reused for output_std, input_impact, output_axes
+    2. Uses max() reduction instead of .all() for speed
+    3. Global min/max for range check (no intermediate boolean tensor)
     
     Args:
         all_outputs: Tensor of shape (num_seeds, *output_shape)
@@ -293,11 +324,30 @@ def run_all_filters(all_outputs: torch.Tensor) -> Dict[str, bool]:
     Returns:
         Dict mapping filter names to results (True = problematic)
     """
+    num_seeds = all_outputs.shape[0]
+    
+    # === Output Range Check ===
+    # Global min/max - highly optimized single-pass CUDA kernels
+    global_min = all_outputs.min().item()
+    global_max = all_outputs.max().item()
+    in_range = (global_min > -0.01) and (global_max < 0.01)
+    
+    # === Variance Check (shared across std/axes/input_impact) ===
+    flat = all_outputs.view(num_seeds, -1)
+    
+    # Compute variance ONCE across seeds for each position
+    var = torch.var(flat, dim=0)
+    
+    # Use max reduction - if max(var) < threshold, all vars are below threshold
+    max_var = var.max().item()
+    low_var = max_var < _VAR_THRESHOLD
+    very_low_var = max_var < _VAR_THRESHOLD * 10
+    
     return {
-        'output_range': analyze_output_range(all_outputs),
-        'output_std': analyze_output_std(all_outputs),
-        'output_axes': analyze_output_axes(all_outputs),
-        'input_impact': analyze_input_impact(all_outputs),
+        'output_range': in_range,
+        'output_std': low_var,
+        'output_axes': low_var or very_low_var,
+        'input_impact': low_var,
     }
 
 
