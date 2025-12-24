@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'relative',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     Model that performs a GEMM, BatchNorm, GELU, and ReLU in sequence.
@@ -27,7 +34,16 @@ batch_size = 16384
 in_features = 4096
 out_features = 4096
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_features)]
 
 def get_init_inputs():

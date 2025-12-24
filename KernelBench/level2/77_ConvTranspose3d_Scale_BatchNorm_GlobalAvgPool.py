@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'relative',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     Model that performs a 3D transposed convolution, scales the output, applies batch normalization, 
@@ -27,7 +34,16 @@ depth, height, width = 16, 32, 32
 kernel_size = 5
 scale_factor = 2.0
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_channels, depth, height, width)]
 
 def get_init_inputs():

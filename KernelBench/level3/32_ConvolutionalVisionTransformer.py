@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     def __init__(self, num_classes, embed_dim=512, num_heads=8, num_layers=6, 
                  mlp_ratio=4.0, patch_size=4, in_channels=3, image_size=32):
@@ -65,7 +72,16 @@ in_channels = 3
 num_heads = 4
 num_classes = 1000
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_channels, image_size, image_size)]
 
 def get_init_inputs():

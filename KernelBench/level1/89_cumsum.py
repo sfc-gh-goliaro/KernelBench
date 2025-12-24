@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     A simple model that performs a cumulative sum (prefix sum) operation along a specified dimension.
@@ -37,7 +44,7 @@ batch_size = 32768
 input_shape = (32768,)
 dim = 1
 
-def get_inputs():
+def get_inputs(**kwargs):
     """
     Generates random inputs for testing the Scan model.
 

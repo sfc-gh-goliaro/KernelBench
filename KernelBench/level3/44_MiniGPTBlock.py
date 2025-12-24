@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 # From https://github.com/karpathy/minGPT/blob/master/mingpt/model.py
 
 class NewGELU(nn.Module):
@@ -90,7 +97,16 @@ n_head = 8
 attn_pdrop = 0.0
 resid_pdrop = 0.0
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, seq_len, n_embd)]
 
 def get_init_inputs():

@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 # From https://github.com/karpathy/minGPT/blob/master/mingpt/model.py
 
 class NewGELU(nn.Module):
@@ -60,7 +67,16 @@ max_seqlen = 1024
 n_embd = 768  # Hidden dimension, typical for BERT-base size
 n_head = 12   # Number of attention heads, typical for BERT-base size
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, max_seqlen, n_embd)]
 
 def get_init_inputs():

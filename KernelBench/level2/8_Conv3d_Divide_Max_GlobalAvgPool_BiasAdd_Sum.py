@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Model that performs a 3D convolution, divides by a constant, applies max pooling,
@@ -34,7 +41,16 @@ pool_size = (2, 2, 2)
 bias_shape = (out_channels, 1, 1, 1)
 sum_dim = 1
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_channels, depth, height, width)]
 
 def get_init_inputs():

@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Simple model that performs a single matrix multiplication (C = A * B) with A and B being symmetric matrices.
@@ -23,7 +30,7 @@ class Model(nn.Module):
 
 N = 4096
 
-def get_inputs():
+def get_inputs(**kwargs):
     """
     Generates a pair of random symmetric matrices for testing.
 

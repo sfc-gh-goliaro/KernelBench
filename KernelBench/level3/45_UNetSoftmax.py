@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'log_domain',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 # U-Net Implementation
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -81,7 +88,16 @@ height = 64
 width = 512
 features = 64
 # Test code for UNet
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_channels, height, width)]
 
 def get_init_inputs():

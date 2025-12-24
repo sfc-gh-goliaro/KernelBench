@@ -2,6 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     def __init__(self, input_channels, stages, block_widths, output_classes):
         """
@@ -64,7 +71,7 @@ stages = 3
 block_widths = [64, 128, 256]
 output_classes = 10
 
-def get_inputs():
+def get_inputs(**kwargs):
     """ Generates random input tensor of shape (batch_size, input_channels, height, width) """
     return [torch.rand(batch_size, input_channels, image_height, image_width)]
 

@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'log_domain',
+    'atol': 1e-5,
+    'rtol': 1e-3,
+}
+
 class Model(nn.Module):
     """
     Simple model that performs a 3D convolution, applies minimum operation along a specific dimension, 
@@ -30,7 +37,16 @@ D, H, W = 24, 32, 32  # Increased depth
 kernel_size = 3
 dim = 2  # Dimension along which to apply minimum operation (e.g., depth)
 
-def get_inputs():
+def get_inputs(**kwargs):
+    """
+    Generate inputs for the model.
+    
+    Args:
+        **kwargs: Override default dimensions (e.g., batch_size=32)
+    
+    Returns:
+        List of input tensors
+    """
     return [torch.rand(batch_size, in_channels, D, H, W)]
 
 def get_init_inputs():

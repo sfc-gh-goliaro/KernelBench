@@ -1,6 +1,13 @@
 import torch
 import torch.nn as nn
 
+
+TASK_CONFIG = {
+    'comparison_mode': 'default',
+    'atol': 1e-4,
+    'rtol': 1e-4,
+}
+
 class Model(nn.Module):
     """
     Simple model that performs matrix multiplication (C = A * B) for upper triangular matrices.
@@ -23,7 +30,7 @@ class Model(nn.Module):
 
 N = 4096
 
-def get_inputs():
+def get_inputs(**kwargs):
     """
     Generates upper triangular matrices for testing.
 
