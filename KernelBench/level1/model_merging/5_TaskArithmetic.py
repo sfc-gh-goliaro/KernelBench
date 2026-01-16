@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -6,13 +11,6 @@ class Model(nn.Module):
     Task Arithmetic
     
     Used by: Multi-task merging
-    
-    Task vectors: add/subtract task-specific weight deltas.
-    
-    Shapes:
-        base: (param_shape) base weights
-        deltas: list of (param_shape) task vectors
-        Output: (param_shape) merged
     """
     
     def __init__(self, scaling: float = 1.0):
@@ -26,14 +24,24 @@ class Model(nn.Module):
         return result
 
 
-param_shape = (4096, 4096)
+# ============================================================================
+# Benchmark Configuration
+# ============================================================================
 
-def get_inputs():
-    base = torch.randn(*param_shape, device='cuda')
-    d1 = torch.randn(*param_shape, device='cuda') * 0.1
-    d2 = torch.randn(*param_shape, device='cuda') * 0.1
-    return [base, d1, d2]
+PARAMETERS = [
+    {"param_shape": (4096, 4096), "num_deltas": 2, "scaling": 0.5},
+]
 
-def get_init_inputs():
-    return [0.5]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "5_TaskArithmetic")
 
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    base = DISTRIBUTIONS[dist_name](p["param_shape"], dtype=dtype, device=device)
+    deltas = [DISTRIBUTIONS[dist_name](p["param_shape"], dtype=dtype, device=device) * 0.1 for _ in range(p["num_deltas"])]
+    return [base] + deltas
+
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["scaling"]]

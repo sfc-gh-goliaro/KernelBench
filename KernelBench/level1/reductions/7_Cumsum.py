@@ -1,57 +1,41 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
 class Model(nn.Module):
     """
     A simple model that performs a cumulative sum (prefix sum) operation along a specified dimension.
-
-    Parameters:
-        dim (int): The dimension along which to perform the scan operation.
     """
 
     def __init__(self, dim):
-        """
-        Initialize the Scan model.
-
-        Args:
-            dim (int): The dimension along which to perform the cumulative sum.
-        """
         super(Model, self).__init__()
         self.dim = dim
 
     def forward(self, x):
-        """
-        Forward pass for the Scan model, computing the cumulative sum along the specified dimension.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, *input_shape), where `*input_shape` 
-                              can vary depending on the use case.
-
-        Returns:
-            torch.Tensor: Tensor of the same shape as `x` after applying cumulative sum along `dim`.
-        """
         return torch.cumsum(x, dim=self.dim)
 
-# Define input dimensions and parameters
-batch_size = 32768
-input_shape = (32768,)
-dim = 1
+# ============================================================================
+# Benchmark Configuration
+# ============================================================================
 
-def get_inputs():
-    """
-    Generates random inputs for testing the Scan model.
+PARAMETERS = [
+    {"batch_size": 32768, "input_dim": 32768, "reduce_dim": 1},
+]
 
-    Returns:
-        list: A list containing a single randomly generated tensor with shape 
-              (batch_size, *input_shape).
-    """
-    return [torch.rand(batch_size, *input_shape)]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("reductions", "7_Cumsum")
 
-def get_init_inputs():
-    """
-    Returns the initialization parameters for the Scan model.
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["input_dim"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    return [x]
 
-    Returns:
-        list: A list containing the `dim` parameter for model initialization.
-    """
-    return [dim]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["reduce_dim"]]

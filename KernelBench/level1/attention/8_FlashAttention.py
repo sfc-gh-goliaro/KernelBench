@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -65,19 +70,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-num_heads = 32
-seq_length = 2048
-head_dim = 128
+PARAMETERS = [
+    {"batch_size": 8, "num_heads": 32, "seq_length": 2048, "head_dim": 128},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    q = torch.randn(batch_size, num_heads, seq_length, head_dim, device='cuda')
-    k = torch.randn(batch_size, num_heads, seq_length, head_dim, device='cuda')
-    v = torch.randn(batch_size, num_heads, seq_length, head_dim, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "8_FlashAttention")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["num_heads"], p["seq_length"], p["head_dim"])
+    q = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    k = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    v = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [q, k, v]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [head_dim]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["head_dim"]]

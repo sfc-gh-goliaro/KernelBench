@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -6,41 +11,15 @@ class Model(nn.Module):
     Parallel Language Model Head
     
     Used by: vLLM, TensorRT-LLM, Megatron-LM
-    
-    Final projection from hidden states to vocabulary logits.
-    Can be partitioned across vocabulary dimension for tensor parallelism.
-    Often shares weights with input embeddings (tied embeddings).
-    
-    Shapes:
-        Input: (batch_size, seq_length, hidden_size)
-        Output: (batch_size, seq_length, vocab_size)
     """
     
     def __init__(self, hidden_size: int = 4096, vocab_size: int = 128256):
-        """
-        Initialize Parallel LM Head.
-        
-        Args:
-            hidden_size: Input hidden dimension
-            vocab_size: Vocabulary size (output dimension)
-        """
         super(Model, self).__init__()
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
-        
-        # LM head projection (not tied to embeddings in this implementation)
         self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Project hidden states to vocabulary logits.
-        
-        Args:
-            x: Hidden states (batch_size, seq_length, hidden_size)
-            
-        Returns:
-            Logits (batch_size, seq_length, vocab_size)
-        """
         return self.lm_head(x)
 
 
@@ -48,17 +27,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_length = 2048
-hidden_size = 4096
-vocab_size = 128256  # Llama-3 vocabulary size
+PARAMETERS = [
+    {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096, "vocab_size": 128256},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    x = torch.randn(batch_size, seq_length, hidden_size, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("linear_projections", "4_ParallelLMHead")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["seq_length"], p["hidden_size"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [hidden_size, vocab_size]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["hidden_size"], p["vocab_size"]]

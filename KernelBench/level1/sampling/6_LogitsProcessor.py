@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -6,42 +11,17 @@ class Model(nn.Module):
     Logits Processor
     
     Used by: All LLM inference
-    
-    Base logits processor that applies transformations before sampling.
-    This implementation applies temperature scaling and optional top-k mask.
-    
-    Shapes:
-        Input: (batch_size, vocab_size) logits
-        Output: (batch_size, vocab_size) processed logits
     """
     
     def __init__(self, temperature: float = 1.0, top_k: int = 0):
-        """
-        Initialize logits processor.
-        
-        Args:
-            temperature: Sampling temperature
-            top_k: Top-k filtering (0 = disabled)
-        """
         super(Model, self).__init__()
         self.temperature = temperature
         self.top_k = top_k
     
     def forward(self, logits: torch.Tensor) -> torch.Tensor:
-        """
-        Process logits before sampling.
-        
-        Args:
-            logits: Logits tensor of shape (batch_size, vocab_size)
-            
-        Returns:
-            Processed logits of shape (batch_size, vocab_size)
-        """
-        # Apply temperature scaling
         if self.temperature != 1.0:
             logits = logits / self.temperature
         
-        # Apply top-k filtering
         if self.top_k > 0:
             top_k_values = torch.topk(logits, self.top_k, dim=-1).values
             threshold = top_k_values[..., -1, None]
@@ -55,15 +35,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 64
-vocab_size = 32000
+PARAMETERS = [
+    {"batch_size": 64, "vocab_size": 32000, "temperature": 0.7, "top_k": 50},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    logits = torch.randn(batch_size, vocab_size, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "6_LogitsProcessor")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["vocab_size"])
+    logits = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [logits]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [0.7, 50]  # temperature=0.7, top_k=50
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["temperature"], p["top_k"]]

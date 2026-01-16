@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -93,19 +98,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-tgt_len = 512
-src_len = 1024
-hidden_size = 4096
-num_heads = 32
+PARAMETERS = [
+    {"batch_size": 8, "tgt_len": 512, "src_len": 1024, "hidden_size": 4096, "num_heads": 32},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    decoder_hidden = torch.randn(batch_size, tgt_len, hidden_size, device='cuda')
-    encoder_hidden = torch.randn(batch_size, src_len, hidden_size, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "11_CrossAttention")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    decoder_shape = (p["batch_size"], p["tgt_len"], p["hidden_size"])
+    encoder_shape = (p["batch_size"], p["src_len"], p["hidden_size"])
+    decoder_hidden = DISTRIBUTIONS[dist_name](decoder_shape, dtype=dtype, device=device)
+    encoder_hidden = DISTRIBUTIONS[dist_name](encoder_shape, dtype=dtype, device=device)
     return [decoder_hidden, encoder_hidden]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [hidden_size, num_heads]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["hidden_size"], p["num_heads"]]

@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -119,18 +124,21 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-sample_rate = 16000
-duration = 30  # seconds
-n_samples = sample_rate * duration
-n_mels = 80
+PARAMETERS = [
+    {"batch_size": 8, "sample_rate": 16000, "duration": 30, "n_mels": 80, "n_fft": 400, "hop_length": 160},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    waveform = torch.randn(batch_size, n_samples, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "1_MelSpectrogram")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    n_samples = p["sample_rate"] * p["duration"]
+    shape = (p["batch_size"], n_samples)
+    waveform = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [waveform]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [sample_rate, 400, 160, n_mels]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["sample_rate"], p["n_fft"], p["hop_length"], p["n_mels"]]

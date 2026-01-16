@@ -1,43 +1,41 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
 class Model(nn.Module):
     """
     A model that performs a cumulative product operation along a specified dimension.
-
-    Parameters:
-        dim (int): The dimension along which to perform the cumulative product operation.
     """
 
     def __init__(self, dim):
-        """
-        Initialize the CumulativeProductModel.
-
-        Args:
-            dim (int): The dimension along which to perform the cumulative product.
-        """
         super(Model, self).__init__()
         self.dim = dim
 
     def forward(self, x):
-        """
-        Forward pass, computing the cumulative product along the specified dimension.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, *input_shape).
-
-        Returns:
-            torch.Tensor: Tensor of the same shape as `x` after applying cumulative product along `dim`.
-        """
         return torch.cumprod(x, dim=self.dim)
 
-# Define input dimensions and parameters
-batch_size = 32768
-input_shape = (32768,)
-dim = 1
+# ============================================================================
+# Benchmark Configuration
+# ============================================================================
 
-def get_inputs():
-    return [torch.rand(batch_size, *input_shape)]
+PARAMETERS = [
+    {"batch_size": 32768, "input_dim": 32768, "reduce_dim": 1},
+]
 
-def get_init_inputs():
-    return [dim]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("reductions", "8_Cumprod")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["input_dim"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    return [x]
+
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["reduce_dim"]]

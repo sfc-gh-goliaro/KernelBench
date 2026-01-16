@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -6,12 +11,6 @@ class Model(nn.Module):
     Weight Averaging
     
     Used by: Model soup, ensemble
-    
-    Simple weight averaging: (w1 + w2 + ... + wn) / n
-    
-    Shapes:
-        weights: list of (param_shape) tensors
-        Output: (param_shape) averaged
     """
     
     def __init__(self):
@@ -21,14 +20,22 @@ class Model(nn.Module):
         return sum(weights) / len(weights)
 
 
-param_shape = (4096, 4096)
+# ============================================================================
+# Benchmark Configuration
+# ============================================================================
 
-def get_inputs():
-    w1 = torch.randn(*param_shape, device='cuda')
-    w2 = torch.randn(*param_shape, device='cuda')
-    w3 = torch.randn(*param_shape, device='cuda')
-    return [w1, w2, w3]
+PARAMETERS = [
+    {"param_shape": (4096, 4096), "num_models": 3},
+]
 
-def get_init_inputs():
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "1_WeightAverage")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    weights = [DISTRIBUTIONS[dist_name](p["param_shape"], dtype=dtype, device=device) for _ in range(p["num_models"])]
+    return weights
+
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return []
-

@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -6,12 +11,6 @@ class Model(nn.Module):
     Cross Network Layer (DCN)
     
     Used by: DCN (Deep & Cross Network)
-    
-    Cross layer: x_0 * x_l^T * w + b + x_l for explicit crossing.
-    
-    Shapes:
-        Input: (batch, input_dim)
-        Output: (batch, input_dim)
     """
     
     def __init__(self, input_dim: int, num_layers: int = 3):
@@ -24,18 +23,28 @@ class Model(nn.Module):
         x0 = x
         xl = x
         for w, b in zip(self.weights, self.biases):
-            # x_l+1 = x_0 * (x_l^T * w) + b + x_l
             xl = x0 * (xl @ w) + b + xl
         return xl
 
 
-batch_size = 4096
-input_dim = 416
+# ============================================================================
+# Benchmark Configuration
+# ============================================================================
 
-def get_inputs():
-    x = torch.randn(batch_size, input_dim, device='cuda')
+PARAMETERS = [
+    {"batch_size": 4096, "input_dim": 416},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "7_CrossNetwork")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["input_dim"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    return [input_dim]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["input_dim"]]

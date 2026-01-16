@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -59,21 +64,24 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-num_heads = 32
-head_dim = 128
-cached_seq_len = 1024
-new_seq_len = 1
+PARAMETERS = [
+    {"batch_size": 8, "num_heads": 32, "head_dim": 128, "cached_seq_len": 1024, "new_seq_len": 1},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    new_k = torch.randn(batch_size, num_heads, new_seq_len, head_dim, device='cuda')
-    new_v = torch.randn(batch_size, num_heads, new_seq_len, head_dim, device='cuda')
-    cached_k = torch.randn(batch_size, num_heads, cached_seq_len, head_dim, device='cuda')
-    cached_v = torch.randn(batch_size, num_heads, cached_seq_len, head_dim, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "6_KVCache_Operations")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    new_shape = (p["batch_size"], p["num_heads"], p["new_seq_len"], p["head_dim"])
+    cached_shape = (p["batch_size"], p["num_heads"], p["cached_seq_len"], p["head_dim"])
+    new_k = DISTRIBUTIONS[dist_name](new_shape, dtype=dtype, device=device)
+    new_v = DISTRIBUTIONS[dist_name](new_shape, dtype=dtype, device=device)
+    cached_k = DISTRIBUTIONS[dist_name](cached_shape, dtype=dtype, device=device)
+    cached_v = DISTRIBUTIONS[dist_name](cached_shape, dtype=dtype, device=device)
     return [new_k, new_v, cached_k, cached_v]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [num_heads, head_dim]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["num_heads"], p["head_dim"]]

@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,60 +12,27 @@ class Model(nn.Module):
     Mamba Causal Conv1d
     
     Used by: Mamba, Mamba-2
-    
-    Causal depthwise 1D convolution for Mamba input preprocessing
-    before selective scan. Provides local context to each position.
-    
-    Shapes:
-        Input: (batch, seq_len, d_inner)
-        Output: (batch, seq_len, d_inner)
     """
     
     def __init__(self, d_inner: int, kernel_size: int = 4):
-        """
-        Initialize Mamba Conv1d.
-        
-        Args:
-            d_inner: Number of channels (processed depthwise)
-            kernel_size: Convolution kernel size
-        """
         super(Model, self).__init__()
         self.d_inner = d_inner
         self.kernel_size = kernel_size
         
-        # Depthwise causal convolution
         self.conv = nn.Conv1d(
             d_inner, d_inner, kernel_size,
-            padding=kernel_size - 1,  # Causal padding
-            groups=d_inner,  # Depthwise
+            padding=kernel_size - 1,
+            groups=d_inner,
             bias=True
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply causal depthwise convolution.
-        
-        Args:
-            x: Input tensor (batch, seq_len, d_inner)
-            
-        Returns:
-            Output tensor (batch, seq_len, d_inner)
-        """
         seq_len = x.shape[1]
         
-        # Transpose for conv1d: (batch, d_inner, seq_len)
         x = x.transpose(1, 2)
-        
-        # Apply convolution
         x = self.conv(x)
-        
-        # Remove extra padding to maintain causality
         x = x[:, :, :seq_len]
-        
-        # Apply SiLU activation (as in Mamba)
         x = F.silu(x)
-        
-        # Transpose back: (batch, seq_len, d_inner)
         x = x.transpose(1, 2)
         
         return x
@@ -70,17 +42,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_length = 2048
-d_inner = 4096
-kernel_size = 4
+PARAMETERS = [
+    {"batch_size": 8, "seq_length": 2048, "d_inner": 4096, "kernel_size": 4},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    x = torch.randn(batch_size, seq_length, d_inner, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "3_MambaConv1d")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["d_inner"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [d_inner, kernel_size]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["d_inner"], p["kernel_size"]]

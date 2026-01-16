@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 
@@ -6,32 +11,29 @@ class Model(nn.Module):
     Simple model that performs Frobenius norm normalization.
     """
     def __init__(self):
-        """
-        Initializes the Frobenius norm normalization layer.
-        """
         super(Model, self).__init__()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Applies Frobenius norm normalization to the input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor of arbitrary shape.
-
-        Returns:
-            torch.Tensor: Output tensor with Frobenius norm normalization applied, same shape as input.
-        """
         norm = torch.norm(x, p='fro')
         return x / norm
 
-batch_size = 112
-features = 64
-dim1 = 512
-dim2 = 512
+# ============================================================================
+# Benchmark Configuration
+# ============================================================================
 
-def get_inputs():
-    x = torch.rand(batch_size, features, dim1, dim2)
+PARAMETERS = [
+    {"batch_size": 112, "features": 64, "dim1": 512, "dim2": 512},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "5_FrobeniusNorm")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["features"], p["dim1"], p["dim2"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return []

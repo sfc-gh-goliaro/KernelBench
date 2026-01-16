@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -60,17 +65,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-n_mels = 80
-time_frames = 3000  # ~30 seconds at 100 frames/sec
-hidden_size = 1024
+PARAMETERS = [
+    {"batch_size": 8, "n_mels": 80, "time_frames": 3000, "hidden_size": 1024},  # ~30 seconds at 100 frames/sec
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    mel_spec = torch.randn(batch_size, n_mels, time_frames, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "2_AudioConvEncoder")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["n_mels"], p["time_frames"])
+    mel_spec = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [mel_spec]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [n_mels, hidden_size]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["n_mels"], p["hidden_size"]]

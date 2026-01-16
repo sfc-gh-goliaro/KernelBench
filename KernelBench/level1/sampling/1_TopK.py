@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,51 +12,21 @@ class Model(nn.Module):
     Top-K Sampling
     
     Used by: All LLM inference
-    
-    Sample from the top-k highest probability tokens, redistributing
-    probability mass among them.
-    
-    Shapes:
-        Input: (batch_size, vocab_size) logits
-        Output: (batch_size,) sampled token indices
     """
     
     def __init__(self, k: int = 50, temperature: float = 1.0):
-        """
-        Initialize Top-K sampling.
-        
-        Args:
-            k: Number of top tokens to consider
-            temperature: Sampling temperature
-        """
         super(Model, self).__init__()
         self.k = k
         self.temperature = temperature
     
     def forward(self, logits: torch.Tensor) -> torch.Tensor:
-        """
-        Sample tokens using top-k filtering.
-        
-        Args:
-            logits: Logits tensor of shape (batch_size, vocab_size)
-            
-        Returns:
-            Sampled token indices of shape (batch_size,)
-        """
-        # Apply temperature
         if self.temperature != 1.0:
             logits = logits / self.temperature
         
-        # Get top-k values and indices
         top_k_values, top_k_indices = torch.topk(logits, self.k, dim=-1)
-        
-        # Convert to probabilities
         probs = F.softmax(top_k_values, dim=-1)
-        
-        # Sample from the filtered distribution
         sampled_idx = torch.multinomial(probs, num_samples=1).squeeze(-1)
         
-        # Map back to original vocabulary indices
         batch_indices = torch.arange(logits.shape[0], device=logits.device)
         sampled_tokens = top_k_indices[batch_indices, sampled_idx]
         
@@ -62,16 +37,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 64
-vocab_size = 32000
-k = 50
+PARAMETERS = [
+    {"batch_size": 64, "vocab_size": 32000, "k": 50},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    logits = torch.randn(batch_size, vocab_size, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "1_TopK")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["vocab_size"])
+    logits = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [logits]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [k]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["k"]]

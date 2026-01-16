@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -100,32 +105,33 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-num_heads = 32
-head_dim = 128
-block_size = 16
-num_blocks = 256
-max_context_len = 2048
+PARAMETERS = [
+    {"batch_size": 8, "num_heads": 32, "head_dim": 128, "block_size": 16, "num_blocks": 256, "max_context_len": 2048},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    query = torch.randn(batch_size, num_heads, head_dim, device='cuda')
-    key_cache = torch.randn(num_blocks, block_size, num_heads, head_dim, device='cuda')
-    value_cache = torch.randn(num_blocks, block_size, num_heads, head_dim, device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "7_PagedAttention")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    
+    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["head_dim"]), dtype=dtype, device=device)
+    key_cache = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["num_heads"], p["head_dim"]), dtype=dtype, device=device)
+    value_cache = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["num_heads"], p["head_dim"]), dtype=dtype, device=device)
     
     # Create block tables (each sequence uses consecutive blocks for simplicity)
-    max_blocks_per_seq = max_context_len // block_size
-    block_tables = torch.zeros(batch_size, max_blocks_per_seq, dtype=torch.long, device='cuda')
-    for b in range(batch_size):
+    max_blocks_per_seq = p["max_context_len"] // p["block_size"]
+    block_tables = torch.zeros(p["batch_size"], max_blocks_per_seq, dtype=torch.long, device=device)
+    for b in range(p["batch_size"]):
         start_block = b * max_blocks_per_seq
-        block_tables[b] = torch.arange(start_block, start_block + max_blocks_per_seq)
+        block_tables[b] = torch.arange(start_block, start_block + max_blocks_per_seq, device=device)
     
     # Random context lengths
-    context_lens = torch.randint(block_size, max_context_len + 1, (batch_size,), device='cuda')
+    context_lens = torch.randint(p["block_size"], p["max_context_len"] + 1, (p["batch_size"],), device=device)
     
     return [query, key_cache, value_cache, block_tables, context_lens]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [num_heads, head_dim, block_size]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["num_heads"], p["head_dim"], p["block_size"]]
