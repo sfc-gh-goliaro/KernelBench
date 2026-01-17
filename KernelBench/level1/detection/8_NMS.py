@@ -1,8 +1,3 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
-
 import torch
 import torch.nn as nn
 import torchvision.ops as ops
@@ -62,22 +57,15 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-PARAMETERS = [
-    {"num_boxes": 10000, "iou_threshold": 0.45, "score_threshold": 0.25},
-]
+num_boxes = 10000
 
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "8_NMS")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    # Random boxes in xyxy format - use uniform_pos for coordinates
-    boxes = DISTRIBUTIONS[dist_name]((p["num_boxes"], 4), dtype=dtype, device=device) * 640
+def get_inputs():
+    # Random boxes in xyxy format
+    boxes = torch.rand(num_boxes, 4, device='cuda') * 640
     boxes[:, 2:] += boxes[:, :2]  # Ensure x2 > x1, y2 > y1
-    scores = DISTRIBUTIONS[dist_name]((p["num_boxes"],), dtype=dtype, device=device)
+    scores = torch.rand(num_boxes, device='cuda')
     return [boxes, scores]
 
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["iou_threshold"], p["score_threshold"]]
+def get_init_inputs():
+    return [0.45, 0.25]
+

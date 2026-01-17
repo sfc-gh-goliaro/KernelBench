@@ -1,84 +1,78 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
-
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 
 class Model(nn.Module):
     """
-    ReduceScatter (Simulated)
-    
-    Used by: Sequence parallel (gradient sync)
-    
+    ReduceScatter (Distributed)
+
+    Used by: Sequence parallel (gradient sync), tensor parallel
+
     Reduce (sum) then scatter result so each rank gets different shard.
-    This is a simulated single-GPU version.
-    
+    Uses NCCL backend for GPU tensors.
+
     Shapes:
         Input: (batch, seq_len, hidden_size) per rank
-        Output: (batch, seq_len, hidden_size // num_ranks) per rank
+        Output: (batch, seq_len, hidden_size // world_size) - this rank's shard
     """
-    
-    def __init__(self, num_ranks: int = 8, scatter_dim: int = -1):
+
+    def __init__(self, scatter_dim: int = -1, process_group=None):
         """
-        Initialize simulated ReduceScatter.
-        
+        Initialize ReduceScatter.
+
         Args:
-            num_ranks: Number of simulated ranks
             scatter_dim: Dimension to scatter along
+            process_group: The process group to work on. If None, uses default group
         """
         super(Model, self).__init__()
-        self.num_ranks = num_ranks
         self.scatter_dim = scatter_dim
-    
-    def forward(self, *tensors: torch.Tensor, rank: int = 0) -> torch.Tensor:
+        self.process_group = process_group
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Simulate ReduceScatter.
-        
+        Perform ReduceScatter operation.
+
         Args:
-            tensors: Tensors from each rank to reduce
-            rank: Which rank's shard to return
-            
+            x: Input tensor (same on all ranks, will be reduced and scattered)
+
         Returns:
             This rank's shard of the reduced result
         """
-        # First reduce (sum)
-        reduced = tensors[0]
-        for t in tensors[1:]:
-            reduced = reduced + t
-        
-        # Then scatter (each rank gets a shard)
-        shard_size = reduced.shape[self.scatter_dim] // self.num_ranks
-        start = rank * shard_size
-        end = start + shard_size
-        
-        if self.scatter_dim == -1 or self.scatter_dim == len(reduced.shape) - 1:
-            return reduced[..., start:end]
-        else:
-            # General case: use narrow
-            return reduced.narrow(self.scatter_dim, start, shard_size)
+        world_size = dist.get_world_size(self.process_group)
+
+        # Compute output shard size
+        input_shape = list(x.shape)
+        scatter_dim = self.scatter_dim if self.scatter_dim >= 0 else len(input_shape) + self.scatter_dim
+        shard_size = input_shape[scatter_dim] // world_size
+
+        # Create output tensor for this rank's shard
+        output_shape = input_shape.copy()
+        output_shape[scatter_dim] = shard_size
+        output = torch.empty(output_shape, dtype=x.dtype, device=x.device)
+
+        # Split input into chunks for each rank
+        input_chunks = list(x.chunk(world_size, dim=scatter_dim))
+
+        # Perform reduce-scatter
+        dist.reduce_scatter(output, input_chunks, op=dist.ReduceOp.SUM,
+                           group=self.process_group)
+
+        return output
 
 
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
 
-PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096, "num_ranks": 8, "scatter_dim": -1},
-]
+batch_size = 8
+seq_length = 2048
+hidden_size = 4096
 
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("communication", "3_ReduceScatter")
+def get_inputs():
+    """Generate input tensors for forward pass benchmarking."""
+    x = torch.randn(batch_size, seq_length, hidden_size, device='cuda')
+    return [x]
 
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["seq_length"], p["hidden_size"])
-    tensors = [DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device) 
-               for _ in range(p["num_ranks"])]
-    return tensors
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_ranks"], p["scatter_dim"]]
+def get_init_inputs():
+    """Return initialization arguments for the Model class."""
+    return [-1]

@@ -1,8 +1,3 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
-
 import torch
 import torch.nn as nn
 
@@ -11,6 +6,12 @@ class Model(nn.Module):
     Wide Component (Wide & Deep)
     
     Used by: WDL (Wide & Deep Learning)
+    
+    Wide linear component with cross-product feature transformations.
+    
+    Shapes:
+        Input: (batch, input_dim)
+        Output: (batch, 1)
     """
     
     def __init__(self, input_dim: int):
@@ -21,24 +22,13 @@ class Model(nn.Module):
         return self.linear(x)
 
 
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
+batch_size = 4096
+input_dim = 1000
 
-PARAMETERS = [
-    {"batch_size": 4096, "input_dim": 1000},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "5_WideComponent")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["input_dim"])
-    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+def get_inputs():
+    x = torch.randn(batch_size, input_dim, device='cuda')
     return [x]
 
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["input_dim"]]
+def get_init_inputs():
+    return [input_dim]
+

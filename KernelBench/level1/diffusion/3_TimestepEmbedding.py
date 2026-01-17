@@ -1,8 +1,3 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -83,20 +78,15 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-PARAMETERS = [
-    {"batch_size": 64, "embed_dim": 1152, "max_timestep": 1000},
-]
+batch_size = 64
+embed_dim = 1152
 
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "3_TimestepEmbedding")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    # Timesteps are indices, use randint
-    timesteps = torch.randint(0, p["max_timestep"], (p["batch_size"],), device=device)
+def get_inputs():
+    """Generate input tensors for forward pass benchmarking."""
+    timesteps = torch.randint(0, 1000, (batch_size,), device='cuda')
     return [timesteps]
 
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["embed_dim"]]
+def get_init_inputs():
+    """Return initialization arguments for the Model class."""
+    return [embed_dim]
+

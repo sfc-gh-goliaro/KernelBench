@@ -1,8 +1,3 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
-
 import torch
 import torch.nn as nn
 
@@ -11,6 +6,13 @@ class Model(nn.Module):
     VAE Reparameterization Trick
     
     Used by: VAE, CVAE, VQ-VAE
+    
+    z = mu + sigma * epsilon for backprop through sampling.
+    
+    Shapes:
+        mu: (batch, latent_dim)
+        log_var: (batch, latent_dim)
+        Output: (batch, latent_dim)
     """
     
     def __init__(self):
@@ -22,24 +24,14 @@ class Model(nn.Module):
         return mu + std * eps
 
 
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
+batch_size = 64
+latent_dim = 256
 
-PARAMETERS = [
-    {"batch_size": 64, "latent_dim": 256},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "1_Reparameterize")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    
-    mu = DISTRIBUTIONS[dist_name]((p["batch_size"], p["latent_dim"]), dtype=dtype, device=device)
-    log_var = DISTRIBUTIONS[dist_name]((p["batch_size"], p["latent_dim"]), dtype=dtype, device=device)
+def get_inputs():
+    mu = torch.randn(batch_size, latent_dim, device='cuda')
+    log_var = torch.randn(batch_size, latent_dim, device='cuda')
     return [mu, log_var]
 
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+def get_init_inputs():
     return []
+

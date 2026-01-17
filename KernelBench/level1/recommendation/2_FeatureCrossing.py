@@ -1,8 +1,3 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
-
 import torch
 import torch.nn as nn
 
@@ -11,12 +6,19 @@ class Model(nn.Module):
     Feature Crossing
     
     Used by: DCN, DeepFM
+    
+    Explicit feature crossing via outer product or Hadamard.
+    
+    Shapes:
+        Input: (batch, num_features, embed_dim)
+        Output: (batch, interaction_dim)
     """
     
     def __init__(self, num_features: int, embed_dim: int):
         super(Model, self).__init__()
         self.num_features = num_features
         self.embed_dim = embed_dim
+        # Pairwise interactions
         self.num_interactions = num_features * (num_features - 1) // 2
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -30,24 +32,14 @@ class Model(nn.Module):
         return torch.cat(interactions, dim=-1)
 
 
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
+batch_size = 4096
+num_features = 26
+embed_dim = 16
 
-PARAMETERS = [
-    {"batch_size": 4096, "num_features": 26, "embed_dim": 16},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "2_FeatureCrossing")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["num_features"], p["embed_dim"])
-    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+def get_inputs():
+    x = torch.randn(batch_size, num_features, embed_dim, device='cuda')
     return [x]
 
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_features"], p["embed_dim"]]
+def get_init_inputs():
+    return [num_features, embed_dim]
+
