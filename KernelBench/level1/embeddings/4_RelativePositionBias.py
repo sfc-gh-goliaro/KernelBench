@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -71,15 +75,21 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 64  # Number of windows
-num_heads = 8
-window_size = 7
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    return []
+PARAMETERS = [
+    {"batch_size": 64, "num_heads": 8, "window_size": 7},
+]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [num_heads, window_size]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "4_RelativePositionBias")
 
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["num_heads"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    return [x]
+
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["num_heads"], p["window_size"]]

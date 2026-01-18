@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -33,19 +37,20 @@ class Model(nn.Module):
         return self.conv_transpose3d(x)
 
 # Test code
-batch_size = 16
-in_channels = 32
-out_channels = 64
-kernel_depth = 3
-kernel_width = 5
-kernel_height = 5
-depth = 64
-width = 64
-height = 64
 
-def get_inputs():
-    x = torch.rand(batch_size, in_channels, depth, width, height)
+PARAMETERS = [
+    {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_depth": 3, "kernel_width": 5, "kernel_height": 5, "depth": 64, "width": 64, "height": 64},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "18_ConvTranspose3d_AsymKernel")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["depth"], p["width"], p["height"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    return [in_channels, out_channels, (kernel_depth, kernel_width, kernel_height)]  # Provide in_channels, out_channels, kernel_size for initialization
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["in_channels"], p["out_channels"], (kernel_depth, p["kernel_width"], kernel_height)]

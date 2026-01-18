@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -50,14 +54,19 @@ class Model(nn.Module):
         return x / (norm + 1e-12)
 
 
-batch_size = 128
-features = 64
-dim1 = 256
-dim2 = 256
 
-def get_inputs():
-    x = torch.rand(batch_size, features, dim1, dim2)
+PARAMETERS = [
+    {"batch_size": 128, "features": 64, "dim1": 256, "dim2": 256},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "5_VectorNorm")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["features"], p["dim1"], p["dim2"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    return [2.0, None, True]  # p=2, global norm
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    return [2.0, None, True]

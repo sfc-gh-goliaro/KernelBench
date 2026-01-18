@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -144,22 +148,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-num_primitives = 10000
-image_height = 512
-image_width = 512
-tile_size = 16
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    positions_2d = torch.rand(num_primitives, 2, device='cuda') * torch.tensor(
-        [image_width, image_height], device='cuda')
-    radii = torch.rand(num_primitives, device='cuda') * 10 + 1
-    colors = torch.sigmoid(torch.randn(num_primitives, 3, device='cuda'))
-    opacities = torch.sigmoid(torch.randn(num_primitives, device='cuda'))
-    depths = torch.rand(num_primitives, device='cuda') * 10
+PARAMETERS = [
+    {"num_primitives": 10000, "image_height": 512, "image_width": 512, "tile_size": 16},
+]
 
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "8_TileRasterization")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    positions_2d = DISTRIBUTIONS[dist_name]((p["num_primitives"], 2), dtype=dtype, device=device)
+    radii = DISTRIBUTIONS[dist_name]((p["num_primitives"]), dtype=dtype, device=device)
+    depths = DISTRIBUTIONS[dist_name]((p["num_primitives"]), dtype=dtype, device=device)
     return [positions_2d, radii, colors, opacities, depths]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [image_height, image_width, tile_size]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["image_height"], p["image_width"], p["tile_size"]]

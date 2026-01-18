@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -189,30 +193,19 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 64
-vocab_size = 32000
-context_len = 512
 
-# Default configuration: temperature + top-k + top-p (common vLLM/SGLang setup)
-temperature = 0.7
-top_k = 50
-top_p = 0.9
+PARAMETERS = [
+    {"batch_size": 64, "vocab_size": 32000, "context_len": 512, "temperature": 0.7, "top_k": 50, "top_p": 0.9},
+]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    logits = torch.randn(batch_size, vocab_size, device='cuda')
-    # Include input_ids to benchmark with penalties enabled
-    input_ids = torch.randint(0, vocab_size, (batch_size, context_len), device='cuda')
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "1_UnifiedSampler")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    logits = DISTRIBUTIONS[dist_name]((p["batch_size"], p["vocab_size"]), dtype=dtype, device=device)
     return [logits, input_ids]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return {
-        'temperature': temperature,
-        'top_k': top_k,
-        'top_p': top_p,
-        'min_p': 0.0,
-        'repetition_penalty': 1.2,
-        'presence_penalty': 0.0,
-        'frequency_penalty': 0.0
-    }
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    return []

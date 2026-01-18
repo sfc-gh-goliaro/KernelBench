@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -86,17 +90,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_length = 2048
-in_features = 4096
-out_features = 4096
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    x = torch.randn(batch_size, seq_length, in_features, device='cuda', dtype=torch.float16)
+PARAMETERS = [
+    {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 4096},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "2_FP8_GEMM")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["in_features"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [in_features, out_features]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["in_features"], p["out_features"]]

@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -21,24 +25,20 @@ class Model(nn.Module):
         """
         return torch.triu(torch.matmul(A, B))
 
-N = 4096
 
-def get_inputs():
-    """
-    Generates upper triangular matrices for testing.
+PARAMETERS = [
+    {"N": 4096},
+]
 
-    Returns:
-        list: A list containing two upper triangular matrices of shape (N, N).
-    """
-    A = torch.triu(torch.rand(N, N))
-    B = torch.triu(torch.rand(N, N))
-    return [A, B]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "5_UpperTriangularMatMul")
 
-def get_init_inputs():
-    """
-    No specific initialization inputs are needed for this model.
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["N"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    return [x]
 
-    Returns:
-        list: An empty list.
-    """
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return []

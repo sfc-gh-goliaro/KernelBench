@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -94,18 +98,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-num_vision_tokens = 576  # Variable: could be 196, 576, etc.
-vision_dim = 1024
-output_dim = 4096
-num_queries = 64
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    vision_features = torch.randn(batch_size, num_vision_tokens, vision_dim, device='cuda')
+PARAMETERS = [
+    {"batch_size": 8, "num_vision_tokens": 576, "vision_dim": 1024, "output_dim": 4096, "num_queries": 64},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "7_Resampler")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    vision_features = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_vision_tokens"], p["vision_dim"]), dtype=dtype, device=device)
     return [vision_features]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [vision_dim, output_dim, num_queries]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["vision_dim"], p["output_dim"], p["num_queries"]]

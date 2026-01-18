@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -72,20 +76,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-img_size = 224
-num_frames = 8
-patch_size = 16
-temporal_patch_size = 2
-in_channels = 3
-embed_dim = 768
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    x = torch.randn(batch_size, in_channels, num_frames, img_size, img_size, device='cuda')
+PARAMETERS = [
+    {"batch_size": 8, "img_size": 224, "num_frames": 8, "patch_size": 16, "temporal_patch_size": 2, "in_channels": 3, "embed_dim": 768},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "2_PatchEmbed3D")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["num_frames"], p["img_size"], p["img_size"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [img_size, num_frames, patch_size, temporal_patch_size, in_channels, embed_dim]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["img_size"], p["num_frames"], p["patch_size"], p["temporal_patch_size"], p["in_channels"], p["embed_dim"]]

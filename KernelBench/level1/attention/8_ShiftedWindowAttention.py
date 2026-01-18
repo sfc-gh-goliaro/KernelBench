@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -206,33 +210,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-height = 224
-width = 224
-channels = 96
-window_size = 7
-shift_size = 3
-num_heads = 4
-block_size = 49  # window_size * window_size
-num_patches = (height // window_size) * (width // window_size)
-num_blocks = batch_size * num_patches + 64
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    query = torch.randn(batch_size, height, width, channels, device='cuda')
+PARAMETERS = [
+    {"batch_size": 8, "height": 224, "width": 224, "channels": 96, "window_size": 7, "shift_size": 3, "num_heads": 4, "block_size": 49, "num_patches": (height // window_size) * (width // window_size), "num_blocks": batch_size * num_patches + 64},
+]
 
-    feature_cache_pool = torch.randn(
-        num_blocks, block_size, channels, device='cuda'
-    )
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "8_ShiftedWindowAttention")
 
-    block_table = torch.zeros(batch_size, num_patches, dtype=torch.long, device='cuda')
-    for b in range(batch_size):
-        block_table[b] = torch.arange(num_patches, device='cuda') + b * num_patches
-
-    valid_patches = torch.full((batch_size,), num_patches, dtype=torch.long, device='cuda')
-
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["height"], p["width"], p["channels"]), dtype=dtype, device=device)
+    feature_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["channels"]), dtype=dtype, device=device)
+    block_table = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_patches"]), dtype=dtype, device=device)
     return [query, feature_cache_pool, block_table, valid_patches]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [channels, window_size, shift_size, num_heads, block_size]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["channels"], p["window_size"], p["shift_size"], p["num_heads"], p["block_size"]]

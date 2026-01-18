@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -59,17 +63,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 32
-num_patches = 196  # 14x14 for ViT-B/16 on 224x224
-embed_dim = 768
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    # +1 for CLS token
-    x = torch.randn(batch_size, num_patches + 1, embed_dim, device='cuda')
+PARAMETERS = [
+    {"batch_size": 32, "num_patches": 196, "embed_dim": 768},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "4_CLS_Pooling")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_patches"] + 1, p["embed_dim"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [embed_dim, 'cls']
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["embed_dim"], 'cls']

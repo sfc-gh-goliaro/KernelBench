@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -48,17 +52,21 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_length = 2048
-vocab_size = 32000
-hidden_size = 4096
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    input_ids = torch.randint(0, vocab_size, (batch_size, seq_length), device='cuda')
-    return [input_ids]
+PARAMETERS = [
+    {"batch_size": 8, "seq_length": 2048, "vocab_size": 32000, "hidden_size": 4096},
+]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [vocab_size, hidden_size]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "2_Embedding")
 
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    shape = (p["batch_size"], p["seq_length"])
+    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
+    return [x]
+
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["vocab_size"], p["hidden_size"]]

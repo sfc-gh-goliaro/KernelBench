@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -41,14 +45,20 @@ class Model(nn.Module):
         return torch.matmul(A, B)
 
 
-M = 2048
-K = 4096
-N = 2048
 
-def get_inputs():
-    A = torch.rand(M, K)
-    B = torch.rand(K, N)
+PARAMETERS = [
+    {"M": 2048, "K": 4096, "N": 2048},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "1_MatMul")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    A = DISTRIBUTIONS[dist_name]((p["M"], p["K"]), dtype=dtype, device=device)
+    B = DISTRIBUTIONS[dist_name]((p["K"], p["N"]), dtype=dtype, device=device)
     return [A, B]
 
-def get_init_inputs():
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return []

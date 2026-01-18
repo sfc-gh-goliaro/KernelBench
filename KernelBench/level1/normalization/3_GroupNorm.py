@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -28,15 +32,20 @@ class Model(nn.Module):
         """
         return self.gn(x)
 
-batch_size = 112  # scaled up
-features = 64
-num_groups = 8
-dim1 = 512
-dim2 = 512
 
-def get_inputs():
-    x = torch.rand(batch_size, features, dim1, dim2)
+PARAMETERS = [
+    {"batch_size": 112, "features": 64, "num_groups": 8, "dim1": 512, "dim2": 512},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "3_GroupNorm")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["features"], p["dim1"], p["dim2"]), dtype=dtype, device=device)
     return [x]
 
-def get_init_inputs():
-    return [features, num_groups] # num_features
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["features"], p["num_groups"]]

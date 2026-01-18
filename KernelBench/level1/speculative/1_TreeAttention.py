@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -324,41 +328,23 @@ def generate_tree_structure(num_draft: int, branching_factor: int = 2,
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-context_len = 2048
-num_draft_tokens = 63  # Full binary tree: 1 + 2 + 4 + 8 + 16 + 32 = 63
-hidden_size = 4096
-num_heads = 32
-block_size = 16
-branching_factor = 2
-max_blocks_per_seq = (context_len + block_size - 1) // block_size
-num_blocks = batch_size * max_blocks_per_seq + 64
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    query = torch.randn(batch_size, num_draft_tokens, hidden_size, device='cuda')
-    draft_hidden = torch.randn(batch_size, num_draft_tokens, hidden_size, device='cuda')
+PARAMETERS = [
+    {"batch_size": 8, "context_len": 2048, "num_draft_tokens": 63, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "branching_factor": 2, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+]
 
-    # Paged KV cache pool for context
-    kv_cache_pool = torch.randn(
-        num_blocks, block_size, num_heads, hidden_size // num_heads, 2, device='cuda'
-    )
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "1_TreeAttention")
 
-    # Block table: each sequence maps to its blocks
-    block_table = torch.zeros(batch_size, max_blocks_per_seq, dtype=torch.long, device='cuda')
-    for b in range(batch_size):
-        block_table[b] = torch.arange(max_blocks_per_seq, device='cuda') + b * max_blocks_per_seq
-
-    # Context lengths
-    context_lens = torch.full((batch_size,), context_len, dtype=torch.long, device='cuda')
-
-    # Generate realistic tree structure
-    parent_ids = generate_tree_structure(
-        num_draft_tokens, branching_factor, context_len, device='cuda'
-    )
-
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_draft_tokens"], p["hidden_size"]), dtype=dtype, device=device)
+    draft_hidden = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_draft_tokens"], p["hidden_size"]), dtype=dtype, device=device)
+    kv_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["num_heads"], p["hidden_size"] // p["num_heads"], 2), dtype=dtype, device=device)
+    block_table = DISTRIBUTIONS[dist_name]((p["batch_size"], p["max_blocks_per_seq"]), dtype=dtype, device=device)
     return [query, kv_cache_pool, block_table, context_lens, draft_hidden, parent_ids]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [hidden_size, num_heads, block_size]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["hidden_size"], p["num_heads"], p["block_size"]]

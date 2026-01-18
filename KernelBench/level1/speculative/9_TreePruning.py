@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -82,29 +86,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-num_nodes = 128  # Total nodes in tree before pruning
-max_nodes = 64
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    # Random probabilities (would come from model in practice)
-    node_probs = torch.rand(batch_size, num_nodes, device='cuda')
-    node_probs[:, 0] = 1.0  # Root has probability 1
+PARAMETERS = [
+    {"batch_size": 8, "num_nodes": 128, "max_nodes": 64},
+]
 
-    # Tree structure: simple binary tree
-    parent_indices = torch.zeros(num_nodes, dtype=torch.long, device='cuda')
-    parent_indices[0] = -1  # Root has no parent
-    for i in range(1, num_nodes):
-        parent_indices[i] = (i - 1) // 2
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "9_TreePruning")
 
-    # Compute depths
-    node_depths = torch.zeros(num_nodes, dtype=torch.long, device='cuda')
-    for i in range(1, num_nodes):
-        node_depths[i] = node_depths[parent_indices[i]] + 1
-
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    node_probs = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_nodes"]), dtype=dtype, device=device)
+    parent_indices = DISTRIBUTIONS[dist_name]((p["num_nodes"]), dtype=dtype, device=device)
+    node_depths = DISTRIBUTIONS[dist_name]((p["num_nodes"]), dtype=dtype, device=device)
     return [node_probs, parent_indices, node_depths]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [max_nodes]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["max_nodes"]]

@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -141,27 +145,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 32
-num_draft = 5
-vocab_size = 32000
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    # Create probability distributions
-    draft_logits = torch.randn(batch_size, num_draft, vocab_size, device='cuda')
-    # Target has one extra position for bonus token
-    target_logits = torch.randn(batch_size, num_draft + 1, vocab_size, device='cuda')
+PARAMETERS = [
+    {"batch_size": 32, "num_draft": 5, "vocab_size": 32000},
+]
 
-    draft_probs = F.softmax(draft_logits, dim=-1)
-    target_probs = F.softmax(target_logits, dim=-1)
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "2_VerificationSampling")
 
-    # Sample draft tokens from draft distribution
-    draft_tokens = torch.multinomial(
-        draft_probs.view(-1, vocab_size), 1
-    ).view(batch_size, num_draft)
-
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    draft_logits = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_draft"], p["vocab_size"]), dtype=dtype, device=device)
+    target_logits = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_draft"] + 1, p["vocab_size"]), dtype=dtype, device=device)
     return [draft_probs, target_probs, draft_tokens]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [True]  # sample_bonus_token=True
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    return [True]

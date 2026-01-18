@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -90,18 +94,21 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_length = 2048
-num_heads = 32
-head_dim = 128
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    q = torch.randn(batch_size, seq_length, num_heads, head_dim, device='cuda')
-    k = torch.randn(batch_size, seq_length, num_heads, head_dim, device='cuda')
+PARAMETERS = [
+    {"batch_size": 8, "seq_length": 2048, "num_heads": 32, "head_dim": 128},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "1_RotaryEmbedding")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    q = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["num_heads"], p["head_dim"]), dtype=dtype, device=device)
+    k = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["num_heads"], p["head_dim"]), dtype=dtype, device=device)
     return [q, k]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [head_dim]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["head_dim"]]

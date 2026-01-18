@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 from typing import List
@@ -72,17 +76,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-param_shape = (4096, 4096)
-num_models = 5
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    base = torch.randn(*param_shape, device='cuda')
-    weights = [base + 0.05 * torch.randn(*param_shape, device='cuda')
-              for _ in range(num_models)]
-    scores = torch.rand(num_models, device='cuda')
-    return weights + [scores]
+PARAMETERS = [
+    {"param_shape": (4096, 4096), "num_models": 5},
+]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "8_ModelSoups")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    base = DISTRIBUTIONS[dist_name]((*p["param_shape"]), dtype=dtype, device=device)
+    scores = DISTRIBUTIONS[dist_name]((p["num_models"]), dtype=dtype, device=device)
+    return []
+
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return ['weighted']

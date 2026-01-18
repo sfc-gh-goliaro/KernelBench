@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -165,24 +169,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 4
-num_queries = 100
-num_classes = 91  # COCO classes
-num_targets = 10  # Average targets per image
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    pred_logits = torch.randn(batch_size, num_queries, num_classes, device='cuda')
-    pred_boxes = torch.rand(batch_size, num_queries, 4, device='cuda')
+PARAMETERS = [
+    {"batch_size": 4, "num_queries": 100, "num_classes": 91, "num_targets": 10},
+]
 
-    # Ground truth per image
-    target_labels = [torch.randint(0, num_classes, (num_targets,), device='cuda')
-                    for _ in range(batch_size)]
-    target_boxes = [torch.rand(num_targets, 4, device='cuda')
-                   for _ in range(batch_size)]
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "11_HungarianMatcher")
 
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    pred_logits = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_queries"], p["num_classes"]), dtype=dtype, device=device)
+    pred_boxes = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_queries"], 4), dtype=dtype, device=device)
     return [pred_logits, pred_boxes, target_labels, target_boxes]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return []

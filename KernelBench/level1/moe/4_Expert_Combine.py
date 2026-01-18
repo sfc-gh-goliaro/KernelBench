@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -61,24 +65,20 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_length = 2048
-hidden_size = 4096
-num_experts = 8
-top_k = 2
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    num_tokens = batch_size * seq_length
-    total_dispatched = num_tokens * top_k
-    
-    expert_outputs = torch.randn(total_dispatched, hidden_size, device='cuda')
-    dispatch_indices = torch.randint(0, num_tokens, (total_dispatched,), device='cuda')
-    routing_weights = torch.softmax(torch.randn(num_tokens, top_k, device='cuda'), dim=-1)
-    
+PARAMETERS = [
+    {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096, "num_experts": 8, "top_k": 2},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("moe", "4_Expert_Combine")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    expert_outputs = DISTRIBUTIONS[dist_name]((total_dispatched, p["hidden_size"]), dtype=dtype, device=device)
     return [expert_outputs, dispatch_indices, routing_weights, num_tokens]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [top_k]
-
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["top_k"]]

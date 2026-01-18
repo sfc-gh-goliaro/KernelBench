@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -105,18 +109,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-time_frames = 300
-mel_dim = 80
-hidden_dim = 512
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    x_0 = torch.randn(batch_size, time_frames, mel_dim, device='cuda')
-    x_1 = torch.randn(batch_size, time_frames, mel_dim, device='cuda')
-    t = torch.rand(batch_size, device='cuda')
+PARAMETERS = [
+    {"batch_size": 8, "time_frames": 300, "mel_dim": 80, "hidden_dim": 512},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "2_FlowMatching")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x_0 = DISTRIBUTIONS[dist_name]((p["batch_size"], p["time_frames"], p["mel_dim"]), dtype=dtype, device=device)
+    x_1 = DISTRIBUTIONS[dist_name]((p["batch_size"], p["time_frames"], p["mel_dim"]), dtype=dtype, device=device)
+    t = DISTRIBUTIONS[dist_name]((p["batch_size"]), dtype=dtype, device=device)
     return [x_0, x_1, t]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [mel_dim, hidden_dim]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["mel_dim"], p["hidden_dim"]]

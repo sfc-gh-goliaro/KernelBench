@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -157,33 +161,22 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 8
-seq_len = 1
-context_len = 2048
-hidden_size = 4096
-num_heads = 32
-num_kv_heads = 8  # Llama-2 70B uses 8 KV heads
-block_size = 16
-max_blocks_per_seq = (context_len + block_size - 1) // block_size
-num_blocks = batch_size * max_blocks_per_seq + 64
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    query = torch.randn(batch_size, seq_len, hidden_size, device='cuda')
-    head_dim = hidden_size // num_heads
+PARAMETERS = [
+    {"batch_size": 8, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+]
 
-    kv_cache_pool = torch.randn(
-        num_blocks, block_size, num_kv_heads, head_dim, 2, device='cuda'
-    )
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "3_GroupedQueryAttention")
 
-    block_table = torch.zeros(batch_size, max_blocks_per_seq, dtype=torch.long, device='cuda')
-    for b in range(batch_size):
-        block_table[b] = torch.arange(max_blocks_per_seq, device='cuda') + b * max_blocks_per_seq
-
-    context_lens = torch.full((batch_size,), context_len, dtype=torch.long, device='cuda')
-
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["hidden_size"]), dtype=dtype, device=device)
+    kv_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["num_kv_heads"], head_dim, 2), dtype=dtype, device=device)
+    block_table = DISTRIBUTIONS[dist_name]((p["batch_size"], p["max_blocks_per_seq"]), dtype=dtype, device=device)
     return [query, kv_cache_pool, block_table, context_lens]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [hidden_size, num_heads, num_kv_heads, block_size]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["hidden_size"], p["num_heads"], p["num_kv_heads"], p["block_size"]]
