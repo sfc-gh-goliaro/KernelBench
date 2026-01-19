@@ -77,7 +77,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # SpecInfer tree expansion (Llama-2-7B)
     {"batch_size": 8, "num_leaves": 16, "vocab_size": 32000, "top_k": 4, "max_depth": 5},
+    # Sequoia optimal tree (Llama-3.1-8B)
+    {"batch_size": 4, "num_leaves": 32, "vocab_size": 128256, "top_k": 6, "max_depth": 7},
+    # EAGLE-2 dynamic tree (Vicuna-7B)
+    {"batch_size": 8, "num_leaves": 24, "vocab_size": 32000, "top_k": 5, "max_depth": 6},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "8_TreeExpansion")

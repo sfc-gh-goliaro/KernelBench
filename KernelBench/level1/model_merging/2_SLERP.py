@@ -47,7 +47,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: attention QKV projection merging
     {"param_shape": (4096, 4096)},
+    # Qwen2 7B: MLP down projection interpolation
+    {"param_shape": (3584, 18944)},
+    # Phi-3 Mini: feed-forward layer interpolation
+    {"param_shape": (3072, 8192)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "2_SLERP")

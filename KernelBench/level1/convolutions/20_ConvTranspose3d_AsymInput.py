@@ -44,6 +44,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 48, "out_channels": 24, "kernel_size": 3, "depth": 96, "height": 96, "width": 96},
+    # Video-VAE: video generation decoder with asymmetric temporal
+    {"batch_size": 2, "in_channels": 256, "out_channels": 128, "kernel_size": 4, "depth": 16, "height": 64, "width": 64},
+    # V-Net: volumetric medical image segmentation
+    {"batch_size": 4, "in_channels": 128, "out_channels": 64, "kernel_size": 2, "depth": 32, "height": 128, "width": 128},
+    # 3D-GAN: volumetric shape generation decoder
+    {"batch_size": 16, "in_channels": 512, "out_channels": 256, "kernel_size": 4, "depth": 4, "height": 8, "width": 8},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "20_ConvTranspose3d_AsymInput")

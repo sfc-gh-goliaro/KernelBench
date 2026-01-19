@@ -71,6 +71,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 256, "out_channels": 256, "height": 40, "width": 40},
+    # YOLOv8-Nano: backbone CSP at P3 (64 channels, 80x80)
+    {"batch_size": 8, "in_channels": 64, "out_channels": 64, "height": 80, "width": 80},
+    # YOLOv8-Medium: backbone CSP at P4 (256 channels, 40x40)
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "height": 40, "width": 40},
+    # YOLOv8-XLarge: backbone CSP at P5 (512 channels, 20x20)
+    {"batch_size": 4, "in_channels": 512, "out_channels": 512, "height": 20, "width": 20},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "1_CSPBlock")

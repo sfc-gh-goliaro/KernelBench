@@ -89,6 +89,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 11008},
+    # Llama-3.1-8B: 4-bit quantized FFN up-projection
+    {"batch_size": 4, "seq_length": 4096, "in_features": 4096, "out_features": 14336},
+    # Mistral-7B: 4-bit quantized gate projection
+    {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 14336},
+    # Llama-3.1-70B: 4-bit quantized attention projection
+    {"batch_size": 2, "seq_length": 8192, "in_features": 8192, "out_features": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "1_W4A16_GEMM")

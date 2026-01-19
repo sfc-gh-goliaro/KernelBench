@@ -77,6 +77,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "d_inner": 4096, "kernel_size": 4},
+    # Mamba-2-1.3B: d_model=2048, expand=2, d_inner=4096
+    {"batch_size": 8, "seq_length": 4096, "d_inner": 4096, "kernel_size": 4},
+    # Mamba-2-2.7B: d_model=2560, expand=2, d_inner=5120
+    {"batch_size": 8, "seq_length": 2048, "d_inner": 5120, "kernel_size": 4},
+    # Mamba-370M: d_model=1024, expand=2, d_inner=2048
+    {"batch_size": 16, "seq_length": 2048, "d_inner": 2048, "kernel_size": 4},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "3_MambaConv1d")

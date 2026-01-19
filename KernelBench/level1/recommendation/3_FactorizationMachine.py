@@ -40,6 +40,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_features": 26, "embed_dim": 16},
+    # DeepFM: FM layer for ad click prediction
+    {"batch_size": 2048, "num_features": 39, "embed_dim": 10},
+    # FFM: field-aware FM with larger embedding dimension
+    {"batch_size": 512, "num_features": 20, "embed_dim": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "3_FactorizationMachine")

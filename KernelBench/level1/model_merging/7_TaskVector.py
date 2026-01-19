@@ -52,7 +52,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: attention layer task vector extraction
     {"param_shape": (4096, 4096)},
+    # Llama-3.1 70B: large model task vector computation
+    {"param_shape": (8192, 8192)},
+    # Vicuna 13B: MLP layer task vector for instruction tuning
+    {"param_shape": (5120, 13824)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "7_TaskVector")

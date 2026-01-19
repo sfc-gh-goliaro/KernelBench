@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_size": 3, "length": 131072, "stride": 2, "padding": 1, "dilation": 2},
+    # HiFi-GAN: high-fidelity audio upsampling generator
+    {"batch_size": 8, "in_channels": 256, "out_channels": 128, "kernel_size": 16, "length": 8000, "stride": 8, "padding": 4, "dilation": 1},
+    # MelGAN: mel-spectrogram to waveform decoder
+    {"batch_size": 16, "in_channels": 512, "out_channels": 256, "kernel_size": 8, "length": 4000, "stride": 4, "padding": 2, "dilation": 1},
+    # Parallel WaveGAN: parallel waveform generation
+    {"batch_size": 4, "in_channels": 64, "out_channels": 32, "kernel_size": 5, "length": 24000, "stride": 2, "padding": 2, "dilation": 2},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "28_ConvTranspose1d_Full")

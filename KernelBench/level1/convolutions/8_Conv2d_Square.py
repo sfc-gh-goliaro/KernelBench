@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 16, "out_channels": 128, "kernel_size": 3, "width": 1024, "height": 1024},
+    # ResNet-50: conv3_x
+    {"batch_size": 32, "in_channels": 256, "out_channels": 256, "kernel_size": 3, "width": 28, "height": 28},
+    # VGG-16: conv4
+    {"batch_size": 16, "in_channels": 512, "out_channels": 512, "kernel_size": 3, "width": 14, "height": 14},
+    # U-Net: encoder
+    {"batch_size": 8, "in_channels": 64, "out_channels": 128, "kernel_size": 3, "width": 256, "height": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "8_Conv2d_Square")

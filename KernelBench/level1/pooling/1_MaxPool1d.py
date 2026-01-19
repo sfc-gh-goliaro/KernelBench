@@ -38,6 +38,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "features": 192, "sequence_length": 65536, "kernel_size": 8, "stride": 1, "padding": 4, "dilation": 3, "return_indices": False},
+    # Wav2Vec 2.0: temporal pooling in feature extractor (512 features, 16kHz audio)
+    {"batch_size": 32, "features": 512, "sequence_length": 16000, "kernel_size": 3, "stride": 2, "padding": 1, "dilation": 1, "return_indices": False},
+    # TCN (Temporal Convolutional Network): sequence pooling layer
+    {"batch_size": 64, "features": 256, "sequence_length": 4096, "kernel_size": 4, "stride": 2, "padding": 1, "dilation": 1, "return_indices": False},
+    # WaveNet: dilated pooling for audio generation
+    {"batch_size": 16, "features": 128, "sequence_length": 32000, "kernel_size": 2, "stride": 2, "padding": 0, "dilation": 2, "return_indices": False},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "1_MaxPool1d")

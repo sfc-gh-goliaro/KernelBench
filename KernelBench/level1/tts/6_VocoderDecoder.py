@@ -105,6 +105,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4, "n_mels": 80, "mel_frames": 200},
+    # HiFi-GAN: High-fidelity generative adversarial vocoder
+    {"batch_size": 8, "n_mels": 80, "mel_frames": 128},
+    # BigVGAN: Large-scale universal vocoder
+    {"batch_size": 2, "n_mels": 100, "mel_frames": 400},
+    # Vocos: Closing the gap between time-domain and Fourier-based vocoders
+    {"batch_size": 16, "n_mels": 80, "mel_frames": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "6_VocoderDecoder")

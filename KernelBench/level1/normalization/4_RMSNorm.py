@@ -40,6 +40,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 112, "features": 64, "dim1": 512, "dim2": 512},
+    # Llama-3.1-8B: hidden_size=4096
+    {"batch_size": 8, "features": 4096, "dim1": 1, "dim2": 2048},
+    # Llama-3.1-70B: hidden_size=8192
+    {"batch_size": 4, "features": 8192, "dim1": 1, "dim2": 2048},
+    # Mistral-7B-v0.3: hidden_size=4096
+    {"batch_size": 8, "features": 4096, "dim1": 1, "dim2": 4096},
+    # DeepSeek-V2-Lite: hidden_size=2048
+    {"batch_size": 8, "features": 2048, "dim1": 1, "dim2": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "4_RMSNorm")

@@ -34,6 +34,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 112, "features": 64, "dim1": 512, "dim2": 512},
+    # SDXL UNet: GroupNorm replaced by InstanceNorm in some blocks (320 channels, 128x128)
+    {"batch_size": 2, "features": 320, "dim1": 128, "dim2": 128},
+    # SDXL UNet: mid-block (1280 channels, 16x16)
+    {"batch_size": 2, "features": 1280, "dim1": 16, "dim2": 16},
+    # Style transfer networks: instance norm on high-res features
+    {"batch_size": 4, "features": 128, "dim1": 256, "dim2": 256},
+    # SD3-Medium: InstanceNorm in decoder (640 channels, 32x32)
+    {"batch_size": 2, "features": 640, "dim1": 32, "dim2": 32},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "2_InstanceNorm")

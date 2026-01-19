@@ -27,6 +27,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # EfficientNet-B0: stem_channels=32, image_size=224
+    {"batch_size": 32, "dim": 1605632},
+    # EfficientNet-B4: stem_channels=48, image_size=380
+    {"batch_size": 16, "dim": 6926400},
+    # EfficientNet-B7: stem_channels=64, image_size=600
+    {"batch_size": 8, "dim": 23040000},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "7_Swish")

@@ -108,6 +108,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "seq_len": 200, "hidden_size": 512, "num_emotions": 8},
+    # EmotiVoice: Multi-voice and prompt-controlled TTS
+    {"batch_size": 8, "seq_len": 300, "hidden_size": 768, "num_emotions": 12},
+    # EmoSpeech: Emotion-controllable speech synthesis
+    {"batch_size": 32, "seq_len": 128, "hidden_size": 256, "num_emotions": 6},
+    # Expressive TTS: Fine-grained emotion and style control
+    {"batch_size": 4, "seq_len": 400, "hidden_size": 1024, "num_emotions": 16},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "8_EmotionControl")

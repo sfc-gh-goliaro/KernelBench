@@ -51,7 +51,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # SD1.5: 4 latent channels, 512x512 image (64x64 latent)
     {"batch_size": 8, "channels": 4, "height": 64, "width": 64},
+    # SDXL: 4 latent channels, 1024x1024 image (128x128 latent)
+    {"batch_size": 4, "channels": 4, "height": 128, "width": 128},
+    # SD3/FLUX: 16 latent channels, 1024x1024 image (128x128 latent)
+    {"batch_size": 4, "channels": 16, "height": 128, "width": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "4_CFG_Scale")

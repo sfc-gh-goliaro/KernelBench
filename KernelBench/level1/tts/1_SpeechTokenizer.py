@@ -89,6 +89,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "time_frames": 500, "feature_dim": 512, "codebook_size": 1024, "num_codebooks": 8},
+    # VALL-E: Neural codec language model for TTS
+    {"batch_size": 4, "time_frames": 1000, "feature_dim": 256, "codebook_size": 2048, "num_codebooks": 4},
+    # SpeechGPT: Speech-enabled large language model
+    {"batch_size": 16, "time_frames": 250, "feature_dim": 768, "codebook_size": 512, "num_codebooks": 12},
+    # AudioLM: High-quality audio generation
+    {"batch_size": 2, "time_frames": 750, "feature_dim": 1024, "codebook_size": 4096, "num_codebooks": 8},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "1_SpeechTokenizer")

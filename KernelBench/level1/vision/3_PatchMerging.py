@@ -71,6 +71,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "height": 56, "width": 56, "channels": 96},
+    # Swin-v2-Tiny: stage 1 to 2 (96 channels, 56x56 -> 28x28)
+    {"batch_size": 32, "height": 64, "width": 64, "channels": 96},
+    # Swin-v2-Base: stage 1 to 2 (128 channels, 96x96 -> 48x48)
+    {"batch_size": 16, "height": 96, "width": 96, "channels": 128},
+    # Swin-v2-Large: stage 1 to 2 (192 channels, 96x96 -> 48x48)
+    {"batch_size": 8, "height": 96, "width": 96, "channels": 192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "3_PatchMerging")

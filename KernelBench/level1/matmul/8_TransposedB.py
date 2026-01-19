@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"M": 1024 * 2, "K": 4096 * 2, "N": 2048 * 2},
+    # Llama-3.1-8B: QKV projection (seq_len=4096, hidden=4096, qkv_dim=4096*3)
+    {"M": 4096, "K": 4096, "N": 12288},
+    # GPT-3 175B: FFN up projection (hidden=12288, intermediate=49152)
+    {"M": 4096, "K": 12288, "N": 49152},
+    # Mistral-7B: attention key projection (seq_len=8192, hidden=4096)
+    {"M": 8192, "K": 4096, "N": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "8_TransposedB")

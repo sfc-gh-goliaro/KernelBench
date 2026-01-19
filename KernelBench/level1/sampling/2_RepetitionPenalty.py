@@ -69,7 +69,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 64, "vocab_size": 32000, "context_len": 512, "penalty": 1.2},
+    # High-throughput: Llama-2-7B batched generation (large batch, short context)
+    {"batch_size": 128, "vocab_size": 32000, "context_len": 512, "penalty": 1.2},
+    # High-throughput: Llama-3.1-8B high-volume inference
+    {"batch_size": 64, "vocab_size": 128256, "context_len": 1024, "penalty": 1.15},
+    # Low-latency: Llama-3.1-8B long context with strong penalty
+    {"batch_size": 8, "vocab_size": 128256, "context_len": 8192, "penalty": 1.2},
+    # Low-latency: Llama-3.1-70B extended context generation
+    {"batch_size": 4, "vocab_size": 128256, "context_len": 16384, "penalty": 1.1},
+    # Balanced: Mistral-7B standard generation
+    {"batch_size": 32, "vocab_size": 32768, "context_len": 2048, "penalty": 1.15},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "2_RepetitionPenalty")

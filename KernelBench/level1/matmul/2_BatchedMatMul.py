@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 128, "m": 128 * 4, "k": 256 * 4, "n": 512 * 4},
+    # Llama-3.1-8B attention: batch=8*32=256, seq=4096, head_dim=128
+    {"batch_size": 256, "m": 4096, "k": 128, "n": 4096},
+    # Llama-3.1-70B attention: batch=4*64=256, seq=4096, head_dim=128
+    {"batch_size": 256, "m": 4096, "k": 128, "n": 4096},
+    # Mistral-7B attention: batch=8*32=256, seq=4096, head_dim=128
+    {"batch_size": 256, "m": 4096, "k": 128, "n": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "2_BatchedMatMul")

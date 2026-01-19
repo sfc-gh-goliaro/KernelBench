@@ -72,6 +72,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"param_size": (4096, 4096)},
+    # Llama-3.1-8B training: MLP up-projection weight
+    {"param_size": (4096, 14336)},
+    # BERT-base finetuning: attention output projection
+    {"param_size": (768, 768)},
+    # GPT-2 medium training: embedding layer
+    {"param_size": (50257, 1024)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "1_Adam")

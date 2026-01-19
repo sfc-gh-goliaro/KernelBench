@@ -44,6 +44,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 960, "height": 7, "width": 7},
+    # EfficientNet-B0: stem output (32 channels, 112x112)
+    {"batch_size": 32, "channels": 32, "height": 112, "width": 112},
+    # EfficientNet-B4: stem output (48 channels, 190x190)
+    {"batch_size": 16, "channels": 48, "height": 190, "width": 190},
+    # EfficientNet-B7: stem output (64 channels, 300x300)
+    {"batch_size": 8, "channels": 64, "height": 300, "width": 300},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "15_HardSwish")

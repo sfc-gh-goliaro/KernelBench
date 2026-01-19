@@ -21,6 +21,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32768, "input_shape": (32768,), "dim": 1},
+    # YOLOv8: bounding box regression (4 coords per detection)
+    {"batch_size": 8400, "input_shape": (4,), "dim": 1},
+    # ResNet-18: depth estimation output (224x224 spatial)
+    {"batch_size": 32, "input_shape": (224, 224), "dim": 2},
+    # MobileNetV3: regression head output
+    {"batch_size": 4096, "input_shape": (1280,), "dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "3_HuberLoss")

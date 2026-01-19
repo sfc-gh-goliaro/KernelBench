@@ -60,6 +60,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "channels": 512, "height": 32, "width": 32, "scale_factor": 2.0, "mode": 'bilinear', "align_corners": False},
+    # U-Net: decoder upsampling in segmentation
+    {"batch_size": 8, "channels": 256, "height": 64, "width": 64, "scale_factor": 2.0, "mode": 'bilinear', "align_corners": True},
+    # SDXL: diffusion model feature upsampling
+    {"batch_size": 2, "channels": 1280, "height": 16, "width": 16, "scale_factor": 2.0, "mode": 'nearest', "align_corners": False},
+    # FPN: feature pyramid network upsampling
+    {"batch_size": 4, "channels": 256, "height": 32, "width": 32, "scale_factor": 2.0, "mode": 'bicubic', "align_corners": False},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("upsampling", "2_Interpolate")

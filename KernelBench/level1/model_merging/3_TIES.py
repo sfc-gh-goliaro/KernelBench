@@ -48,7 +48,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: attention output projection TIES merge
     {"param_shape": (4096, 4096)},
+    # Mistral 7B: MLP up projection sparse merging
+    {"param_shape": (14336, 4096)},
+    # Gemma 2B: compact layer TIES merging
+    {"param_shape": (2048, 2048)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "3_TIES")

@@ -51,6 +51,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_len": 256, "embed_dim": 256, "num_embeddings": 8192},
+    # SDXL VQ-VAE: high-resolution image tokenization
+    {"batch_size": 1, "seq_len": 4096, "embed_dim": 256, "num_embeddings": 16384},
+    # SD3 VQ-VAE: multi-scale quantization
+    {"batch_size": 2, "seq_len": 1024, "embed_dim": 512, "num_embeddings": 8192},
+    # Muse VQ-GAN: discrete image tokenizer
+    {"batch_size": 4, "seq_len": 256, "embed_dim": 256, "num_embeddings": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "3_VectorQuantize")

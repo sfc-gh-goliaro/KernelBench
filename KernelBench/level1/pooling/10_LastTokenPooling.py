@@ -56,6 +56,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "seq_length": 512, "hidden_size": 4096},
+    # Llama 2-7B: reward model last token extraction (4096 hidden)
+    {"batch_size": 16, "seq_length": 2048, "hidden_size": 4096},
+    # Mistral-7B: embedding/reward model pooling (4096 hidden, 8k context)
+    {"batch_size": 8, "seq_length": 8192, "hidden_size": 4096},
+    # Llama 2-70B: reward model last token extraction (8192 hidden)
+    {"batch_size": 4, "seq_length": 4096, "hidden_size": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "10_LastTokenPooling")

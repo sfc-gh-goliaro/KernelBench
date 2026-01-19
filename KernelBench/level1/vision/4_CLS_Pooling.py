@@ -66,6 +66,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "num_patches": 196, "embed_dim": 768},
+    # ViT-Large: 14x14 patches, 1024-dim
+    {"batch_size": 16, "num_patches": 256, "embed_dim": 1024},
+    # CLIP ViT-H/14: 16x16 patches, 1280-dim
+    {"batch_size": 8, "num_patches": 256, "embed_dim": 1280},
+    # SigLIP-Large: 24x24 patches from 384px image, 1024-dim
+    {"batch_size": 16, "num_patches": 576, "embed_dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "4_CLS_Pooling")

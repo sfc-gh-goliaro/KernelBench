@@ -78,6 +78,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 256, "embedding_dim": 768, "temperature": 0.07},
+    # CLIP ViT-L/14: image-text contrastive learning
+    {"batch_size": 512, "embedding_dim": 768, "temperature": 0.01},
+    # SimCLR ResNet-50: self-supervised visual learning (2048 dim projection)
+    {"batch_size": 4096, "embedding_dim": 2048, "temperature": 0.5},
+    # Sentence-BERT: contrastive sentence embedding
+    {"batch_size": 1024, "embedding_dim": 384, "temperature": 0.05},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "7_ContrastiveLoss")

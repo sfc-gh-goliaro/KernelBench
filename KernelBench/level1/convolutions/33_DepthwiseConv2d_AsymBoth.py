@@ -42,7 +42,13 @@ class Model(nn.Module):
 # Test code
 
 PARAMETERS = [
-    {"batch_size": 32, "in_channels": 128, "out_channels": 128, "kernel_size_h": 3, "kernel_size_w": 7, "width": 256, "height": 128, "stride_h": 1, "stride_w": 1, "padding_h": 0, "padding_w": 0, "dilation_h": 1, "dilation_w": 1, "groups": in_channels},
+    {"batch_size": 32, "in_channels": 128, "out_channels": 128, "kernel_size_h": 3, "kernel_size_w": 7, "width": 256, "height": 128, "stride_h": 1, "stride_w": 1, "padding_h": 0, "padding_w": 0, "dilation_h": 1, "dilation_w": 1, "groups": 128},
+    # ConvNeXt: large kernel depthwise with asymmetric kernels
+    {"batch_size": 16, "in_channels": 192, "out_channels": 192, "kernel_size_h": 1, "kernel_size_w": 7, "width": 56, "height": 56, "stride_h": 1, "stride_w": 1, "padding_h": 0, "padding_w": 3, "dilation_h": 1, "dilation_w": 1, "groups": 192},
+    # MobileNetV3: squeeze-excitation asymmetric depthwise
+    {"batch_size": 32, "in_channels": 80, "out_channels": 80, "kernel_size_h": 3, "kernel_size_w": 5, "width": 28, "height": 14, "stride_h": 1, "stride_w": 1, "padding_h": 1, "padding_w": 2, "dilation_h": 1, "dilation_w": 1, "groups": 80},
+    # EfficientNetV2: fused MBConv asymmetric depthwise
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size_h": 5, "kernel_size_w": 5, "width": 14, "height": 7, "stride_h": 1, "stride_w": 1, "padding_h": 2, "padding_w": 2, "dilation_h": 1, "dilation_w": 1, "groups": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "33_DepthwiseConv2d_AsymBoth")

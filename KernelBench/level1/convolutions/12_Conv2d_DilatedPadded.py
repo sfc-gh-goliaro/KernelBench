@@ -38,6 +38,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 32, "out_channels": 64, "kernel_size": (5, 9), "width": 512, "height": 512, "stride": 1, "padding": (2, 4), "dilation": (2, 3)},
+    # DeepLab: atrous spatial pyramid pooling
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size": (3, 3), "width": 64, "height": 64, "stride": 1, "padding": (6, 6), "dilation": (6, 6)},
+    # DeepLab: ASPP rate 12
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size": (3, 3), "width": 64, "height": 64, "stride": 1, "padding": (12, 12), "dilation": (12, 12)},
+    # Semantic segmentation: dilated conv
+    {"batch_size": 4, "in_channels": 512, "out_channels": 512, "kernel_size": (3, 3), "width": 32, "height": 32, "stride": 1, "padding": (2, 2), "dilation": (2, 2)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "12_Conv2d_DilatedPadded")

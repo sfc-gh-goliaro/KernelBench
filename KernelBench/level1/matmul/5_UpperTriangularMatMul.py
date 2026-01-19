@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"N": 4096},
+    # Llama-3.1-8B: causal attention mask (seq_len=4096)
+    {"N": 4096},
+    # GPT-3 175B: causal attention mask (seq_len=2048)
+    {"N": 2048},
+    # Mistral-7B: causal attention mask with sliding window (seq_len=8192)
+    {"N": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "5_UpperTriangularMatMul")

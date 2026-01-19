@@ -32,6 +32,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_features": 26, "embed_dim": 64},
+    # AutoInt: multi-head self-attention for CTR prediction
+    {"batch_size": 2048, "num_features": 39, "embed_dim": 128},
+    # Transformer4Rec: sequential recommendation attention
+    {"batch_size": 512, "num_features": 50, "embed_dim": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "4_SelfAttn_Features")

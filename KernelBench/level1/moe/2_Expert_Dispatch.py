@@ -77,6 +77,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096, "num_experts": 8, "top_k": 2},
+    # DeepSeek-V2-Lite: hidden_size=2048, num_experts=64, top_k=6
+    {"batch_size": 8, "seq_length": 2048, "hidden_size": 2048, "num_experts": 64, "top_k": 6},
+    # Mixtral-8x7B: hidden_size=4096, num_experts=8, top_k=2
+    {"batch_size": 8, "seq_length": 4096, "hidden_size": 4096, "num_experts": 8, "top_k": 2},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("moe", "2_Expert_Dispatch")

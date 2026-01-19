@@ -65,6 +65,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "seq_length": 512, "hidden_size": 768, "max_seq_length": 8192},
+    # T5-Base: hidden_size=768, max_seq=512
+    {"batch_size": 16, "seq_length": 512, "hidden_size": 768, "max_seq_length": 512},
+    # T5-Large: hidden_size=1024, max_seq=512
+    {"batch_size": 8, "seq_length": 512, "hidden_size": 1024, "max_seq_length": 512},
+    # Whisper-Large-v3: encoder hidden_size=1280
+    {"batch_size": 4, "seq_length": 1500, "hidden_size": 1280, "max_seq_length": 1500},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "3_SinusoidalPosEmbed")

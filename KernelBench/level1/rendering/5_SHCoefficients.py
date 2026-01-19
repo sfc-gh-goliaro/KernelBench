@@ -116,7 +116,13 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 100000, "degree": 3, "num_coeffs": (degree + 1) ** 2},
+    {"batch_size": 100000, "degree": 3, "num_coeffs": 16},
+    # 3DGS: Standard spherical harmonics for view-dependent color
+    {"batch_size": 200000, "degree": 3, "num_coeffs": 16},
+    # Plenoxels: Lower degree SH for faster rendering
+    {"batch_size": 500000, "degree": 2, "num_coeffs": 9},
+    # 3DGS-HD: High-fidelity with degree-4 harmonics
+    {"batch_size": 150000, "degree": 4, "num_coeffs": 25},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "5_SHCoefficients")

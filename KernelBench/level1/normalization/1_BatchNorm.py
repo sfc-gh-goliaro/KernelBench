@@ -34,6 +34,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "features": 64, "dim1": 512, "dim2": 512},
+    # EfficientNet-B0: after stem (32 channels, 112x112)
+    {"batch_size": 32, "features": 32, "dim1": 112, "dim2": 112},
+    # EfficientNet-B7: after stem (64 channels, 300x300)
+    {"batch_size": 8, "features": 64, "dim1": 300, "dim2": 300},
+    # ResNet-50: after conv1 (64 channels, 112x112)
+    {"batch_size": 32, "features": 64, "dim1": 112, "dim2": 112},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "1_BatchNorm")

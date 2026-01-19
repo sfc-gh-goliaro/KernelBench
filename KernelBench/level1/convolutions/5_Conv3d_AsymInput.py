@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 3, "out_channels": 64, "kernel_size": 3, "width": 256, "height": 256, "depth": 10},
+    # Medical imaging: CT scan with few slices
+    {"batch_size": 4, "in_channels": 1, "out_channels": 32, "kernel_size": 3, "width": 512, "height": 512, "depth": 16},
+    # Video classification: short clip
+    {"batch_size": 8, "in_channels": 3, "out_channels": 64, "kernel_size": 3, "width": 224, "height": 224, "depth": 8},
+    # SlowFast: slow pathway
+    {"batch_size": 4, "in_channels": 64, "out_channels": 128, "kernel_size": 3, "width": 56, "height": 56, "depth": 4},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "5_Conv3d_AsymInput")

@@ -110,6 +110,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"num_tokens": 4096, "hidden_size": 7168, "intermediate_size": 2048, "num_experts": 64, "top_k": 6, "shared_expert_intermediate": 2048},
+    # DeepSeek-V2-Lite: hidden_size=2048, num_experts=64, top_k=6
+    {"num_tokens": 4096, "hidden_size": 2048, "intermediate_size": 1408, "num_experts": 64, "top_k": 6, "shared_expert_intermediate": 1408},
+    # DeepSeek-V3: hidden_size=7168, num_experts=256, top_k=8
+    {"num_tokens": 2048, "hidden_size": 7168, "intermediate_size": 2048, "num_experts": 256, "top_k": 8, "shared_expert_intermediate": 2048},
+    # DeepSeek-R1: hidden_size=7168, num_experts=256, top_k=8 (same architecture as V3)
+    {"num_tokens": 1024, "hidden_size": 7168, "intermediate_size": 2048, "num_experts": 256, "top_k": 8, "shared_expert_intermediate": 2048},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("moe", "6_SharedFusedMoE")

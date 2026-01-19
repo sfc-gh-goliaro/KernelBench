@@ -78,6 +78,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "num_heads": 8, "window_size": 7},
+    # Swin-v2-Tiny: window_size=8, num_heads varies by stage
+    {"batch_size": 64, "num_heads": 3, "window_size": 8},
+    # Swin-v2-Base: window_size=12, stage 3 num_heads=16
+    {"batch_size": 32, "num_heads": 16, "window_size": 12},
+    # T5-Base: relative position bias in encoder, 12 heads
+    {"batch_size": 32, "num_heads": 12, "window_size": 32},
+    # Swin-v2-Large: window_size=12, stage 4 num_heads=48
+    {"batch_size": 16, "num_heads": 48, "window_size": 12},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "4_RelativePositionBias")

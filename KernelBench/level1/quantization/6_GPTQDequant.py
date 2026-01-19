@@ -116,6 +116,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 4096, "bits": 4, "group_size": 128},
+    # Llama-3.1-8B-GPTQ: 4-bit FFN with Hessian-based quantization
+    {"batch_size": 4, "seq_length": 4096, "in_features": 4096, "out_features": 14336, "bits": 4, "group_size": 128},
+    # Mixtral-8x7B-GPTQ: MoE expert layer dequantization
+    {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 14336, "bits": 4, "group_size": 64},
+    # CodeLlama-34B-GPTQ: 8-bit quantization for higher accuracy
+    {"batch_size": 2, "seq_length": 8192, "in_features": 8192, "out_features": 22016, "bits": 8, "group_size": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "6_GPTQDequant")

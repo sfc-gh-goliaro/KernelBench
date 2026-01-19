@@ -49,6 +49,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 2048, "height": 7, "width": 7, "output_size": (1, 1)},
+    # ResNet-50: final adaptive pool before classifier (2048 channels, 7x7 -> 1x1)
+    {"batch_size": 64, "channels": 2048, "height": 7, "width": 7, "output_size": (1, 1)},
+    # EfficientNet-B4: final adaptive pool (1792 channels, 12x12 -> 1x1)
+    {"batch_size": 16, "channels": 1792, "height": 12, "width": 12, "output_size": (1, 1)},
+    # VGG-16: adaptive pool if modified for variable input (512 channels, 7x7 -> 1x1)
+    {"batch_size": 32, "channels": 512, "height": 7, "width": 7, "output_size": (1, 1)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "7_AdaptiveAvgPool2d")

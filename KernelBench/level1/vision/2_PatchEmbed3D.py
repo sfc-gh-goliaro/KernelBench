@@ -79,6 +79,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "img_size": 224, "num_frames": 8, "patch_size": 16, "temporal_patch_size": 2, "in_channels": 3, "embed_dim": 768},
+    # Qwen2-VL-2B: patch_size=14, temporal_patch_size=2, vision_hidden=1280
+    {"batch_size": 8, "img_size": 224, "num_frames": 8, "patch_size": 14, "temporal_patch_size": 2, "in_channels": 3, "embed_dim": 1280},
+    # Qwen2-VL-7B: patch_size=14, temporal_patch_size=2, vision_hidden=1280
+    {"batch_size": 4, "img_size": 224, "num_frames": 16, "patch_size": 14, "temporal_patch_size": 2, "in_channels": 3, "embed_dim": 1280},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "2_PatchEmbed3D")

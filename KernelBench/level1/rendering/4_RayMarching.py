@@ -125,6 +125,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_samples": 64},
+    # NeRF: Hierarchical sampling with coarse network
+    {"batch_size": 8192, "num_samples": 128},
+    # Neural SDF: Dense sampling for surface reconstruction
+    {"batch_size": 2048, "num_samples": 256},
+    # Instant-NGP: High batch with fewer samples
+    {"batch_size": 32768, "num_samples": 48},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "4_RayMarching")

@@ -34,6 +34,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "features": 64, "dim1": 256, "dim2": 256},
+    # T5-Base: hidden_size=768
+    {"batch_size": 16, "features": 768, "dim1": 1, "dim2": 512},
+    # T5-Large: hidden_size=1024
+    {"batch_size": 8, "features": 1024, "dim1": 1, "dim2": 512},
+    # T5-3B: hidden_size=1024, intermediate_size=16384
+    {"batch_size": 4, "features": 1024, "dim1": 1, "dim2": 512},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "6_LayerNorm")

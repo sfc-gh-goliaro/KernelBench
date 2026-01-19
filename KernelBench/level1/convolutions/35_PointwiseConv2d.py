@@ -34,6 +34,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 64, "out_channels": 128, "width": 1024, "height": 1024},
+    # MobileNetV2: pointwise expansion
+    {"batch_size": 32, "in_channels": 32, "out_channels": 192, "width": 112, "height": 112},
+    # EfficientNet: pointwise projection
+    {"batch_size": 32, "in_channels": 144, "out_channels": 24, "width": 56, "height": 56},
+    # MobileNetV3: pointwise in SE
+    {"batch_size": 32, "in_channels": 672, "out_channels": 168, "width": 14, "height": 14},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "35_PointwiseConv2d")

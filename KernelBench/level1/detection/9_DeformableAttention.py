@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -161,34 +165,47 @@ class Model(nn.Module):
 # Benchmark Configuration
 # ============================================================================
 
-batch_size = 4
-num_queries = 300
-hidden_size = 256
-num_heads = 8
-num_levels = 4
-spatial_shapes_list = [(80, 80), (40, 40), (20, 20), (10, 10)]
 
-def get_inputs():
-    """Generate input tensors for forward pass benchmarking."""
-    query = torch.randn(batch_size, num_queries, hidden_size, device='cuda')
+PARAMETERS = [
+    # High-throughput: Deformable DETR batched inference (standard resolution)
+    {"batch_size": 16, "num_queries": 300, "hidden_size": 256, "num_heads": 8, "num_levels": 4, "num_points": 4, "spatial_shapes": [(80, 80), (40, 40), (20, 20), (10, 10)]},
+    # High-throughput: DINO high-volume detection (more queries for dense prediction)
+    {"batch_size": 8, "num_queries": 900, "hidden_size": 256, "num_heads": 8, "num_levels": 4, "num_points": 4, "spatial_shapes": [(100, 100), (50, 50), (25, 25), (13, 13)]},
+    # Low-latency: Co-DETR high-resolution single image (1280x1280 input)
+    {"batch_size": 1, "num_queries": 900, "hidden_size": 256, "num_heads": 8, "num_levels": 4, "num_points": 4, "spatial_shapes": [(160, 160), (80, 80), (40, 40), (20, 20)]},
+    # Low-latency: DINO-5scale with extra feature level (high-resolution)
+    {"batch_size": 2, "num_queries": 900, "hidden_size": 256, "num_heads": 8, "num_levels": 5, "num_points": 4, "spatial_shapes": [(200, 200), (100, 100), (50, 50), (25, 25), (13, 13)]},
+    # Balanced: Deformable DETR standard detection
+    {"batch_size": 4, "num_queries": 300, "hidden_size": 256, "num_heads": 8, "num_levels": 4, "num_points": 4, "spatial_shapes": [(80, 80), (40, 40), (20, 20), (10, 10)]},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "9_DeformableAttention")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+
+    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_queries"], p["hidden_size"]), dtype=dtype, device=device)
 
     # Reference points (normalized 0-1)
-    reference_points = torch.rand(batch_size, num_queries, num_levels, 2, device='cuda')
+    reference_points = torch.rand(p["batch_size"], p["num_queries"], p["num_levels"], 2, dtype=dtype, device=device)
 
     # Compute total spatial size
+    spatial_shapes_list = p["spatial_shapes"]
     total_spatial = sum(h * w for h, w in spatial_shapes_list)
-    value = torch.randn(batch_size, total_spatial, hidden_size, device='cuda')
+    value = DISTRIBUTIONS[dist_name]((p["batch_size"], total_spatial, p["hidden_size"]), dtype=dtype, device=device)
 
-    spatial_shapes = torch.tensor(spatial_shapes_list, device='cuda', dtype=torch.long)
+    spatial_shapes = torch.tensor(spatial_shapes_list, device=device, dtype=torch.long)
 
     # Level start indices
-    level_start_index = torch.zeros(num_levels, dtype=torch.long, device='cuda')
-    for i in range(1, num_levels):
+    level_start_index = torch.zeros(p["num_levels"], dtype=torch.long, device=device)
+    for i in range(1, p["num_levels"]):
         h, w = spatial_shapes_list[i-1]
         level_start_index[i] = level_start_index[i-1] + h * w
 
     return [query, reference_points, value, spatial_shapes, level_start_index]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [hidden_size, num_heads, num_levels]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["hidden_size"], p["num_heads"], p["num_levels"], p["num_points"]]

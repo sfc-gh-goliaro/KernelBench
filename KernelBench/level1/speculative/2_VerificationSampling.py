@@ -147,7 +147,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 32, "num_draft": 5, "vocab_size": 32000},
+    # Low-latency: Llama-3.1-8B with extended draft (8 tokens, aggressive speculation)
+    {"batch_size": 8, "num_draft": 16, "vocab_size": 128256},
+    # Low-latency: Llama-3.1-70B deep speculation (12 draft tokens)
+    {"batch_size": 4, "num_draft": 12, "vocab_size": 128256},
+    # High-throughput: Llama-2-7B batched verification (5 drafts, large batch)
+    {"batch_size": 128, "num_draft": 5, "vocab_size": 32000},
+    # High-throughput: Mistral-7B high-volume inference (6 drafts)
+    {"batch_size": 64, "num_draft": 6, "vocab_size": 32768},
+    # Balanced: Llama-3.1-8B standard verification
+    {"batch_size": 32, "num_draft": 8, "vocab_size": 128256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "2_VerificationSampling")

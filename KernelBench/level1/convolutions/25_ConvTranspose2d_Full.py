@@ -40,6 +40,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_size": (3, 5), "height": 128, "width": 256, "stride": (2, 3), "padding": (1, 2), "dilation": (2, 1), "groups": 4},
+    # SDXL-VAE: full-featured decoder transpose conv
+    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": (3, 3), "height": 64, "width": 64, "stride": (2, 2), "padding": (1, 1), "dilation": (1, 1), "groups": 1},
+    # DeepLabV3+: ASPP with dilated grouped transpose
+    {"batch_size": 4, "in_channels": 256, "out_channels": 256, "kernel_size": (3, 3), "height": 65, "width": 65, "stride": (1, 1), "padding": (6, 6), "dilation": (6, 6), "groups": 4},
+    # StyleGAN2: adaptive generator upsampling
+    {"batch_size": 8, "in_channels": 512, "out_channels": 256, "kernel_size": (4, 4), "height": 16, "width": 16, "stride": (2, 2), "padding": (1, 1), "dilation": (1, 1), "groups": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "25_ConvTranspose2d_Full")

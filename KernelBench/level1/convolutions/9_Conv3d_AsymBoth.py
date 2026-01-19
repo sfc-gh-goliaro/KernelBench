@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 3, "out_channels": 64, "kernel_size": (3, 5, 7), "depth": 16, "height": 128, "width": 128},
+    # Medical imaging: asymmetric CT volumes
+    {"batch_size": 2, "in_channels": 1, "out_channels": 32, "kernel_size": (3, 7, 7), "depth": 32, "height": 256, "width": 256},
+    # Video action recognition
+    {"batch_size": 4, "in_channels": 64, "out_channels": 128, "kernel_size": (1, 3, 3), "depth": 8, "height": 56, "width": 56},
+    # 3D point cloud processing
+    {"batch_size": 8, "in_channels": 32, "out_channels": 64, "kernel_size": (5, 3, 3), "depth": 24, "height": 64, "width": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "9_Conv3d_AsymBoth")

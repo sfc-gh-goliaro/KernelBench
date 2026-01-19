@@ -38,6 +38,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "in_channels": 32, "out_channels": 64, "kernel_size": 5, "length": 131072, "stride": 1, "padding": 0, "dilation": 3},
+    # WaveNet: dilated causal convolution for audio generation
+    {"batch_size": 16, "in_channels": 256, "out_channels": 256, "kernel_size": 3, "length": 16000, "stride": 1, "padding": 2, "dilation": 2},
+    # Parallel WaveGAN: vocoder with dilated transpose conv
+    {"batch_size": 8, "in_channels": 128, "out_channels": 64, "kernel_size": 7, "length": 24000, "stride": 1, "padding": 6, "dilation": 2},
+    # TCN: temporal convolutional network decoder
+    {"batch_size": 32, "in_channels": 64, "out_channels": 64, "kernel_size": 3, "length": 8192, "stride": 1, "padding": 4, "dilation": 4},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "24_ConvTranspose1d_Dilated")

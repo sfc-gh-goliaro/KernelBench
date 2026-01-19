@@ -27,6 +27,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # Mamba-2-1.3B: delta discretization (d_inner=4096)
+    {"batch_size": 8, "dim": 4096},
+    # Mamba-2-2.7B: delta discretization (d_inner=5120)
+    {"batch_size": 8, "dim": 5120},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "11_Softplus")

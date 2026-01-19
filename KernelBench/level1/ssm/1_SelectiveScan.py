@@ -95,7 +95,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "d_inner": 4096, "d_state": 16},
+    # Prefill-heavy: Mamba-1-1.4B initial prompt processing (4096 tokens)
+    {"batch_size": 4, "seq_length": 4096, "d_inner": 4096, "d_state": 16},
+    # Prefill-heavy: Mamba-2-2.7B large context prefill (2048 tokens)
+    {"batch_size": 8, "seq_length": 2048, "d_inner": 5120, "d_state": 128},
+    # Decode-heavy: Mamba-1-1.4B autoregressive generation (1 token per step)
+    {"batch_size": 64, "seq_length": 1, "d_inner": 4096, "d_state": 16},
+    # Decode-heavy: Mamba-2-1.3B batched token generation (1 token)
+    {"batch_size": 128, "seq_length": 1, "d_inner": 4096, "d_state": 128},
+    # Decode-heavy: Mamba-2-2.7B high-throughput decoding (1 token)
+    {"batch_size": 32, "seq_length": 1, "d_inner": 5120, "d_state": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "1_SelectiveScan")

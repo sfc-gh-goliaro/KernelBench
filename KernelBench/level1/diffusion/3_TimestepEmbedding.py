@@ -84,7 +84,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # DiT-XL: embed_dim=1152
     {"batch_size": 64, "embed_dim": 1152},
+    # SD1.5/SDXL: UNet time embedding, embed_dim=1280
+    {"batch_size": 32, "embed_dim": 1280},
+    # FLUX: larger transformer, embed_dim=3072
+    {"batch_size": 16, "embed_dim": 3072},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "3_TimestepEmbedding")

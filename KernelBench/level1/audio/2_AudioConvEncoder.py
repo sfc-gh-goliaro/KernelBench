@@ -67,6 +67,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "n_mels": 80, "time_frames": 3000, "hidden_size": 1024},
+    # Whisper-large: 80 mel bands, 1280 hidden size
+    {"batch_size": 8, "n_mels": 80, "time_frames": 3000, "hidden_size": 1280},
+    # Whisper-medium: 80 mel bands, 1024 hidden size
+    {"batch_size": 16, "n_mels": 80, "time_frames": 1500, "hidden_size": 1024},
+    # Whisper-small: 80 mel bands, 768 hidden size
+    {"batch_size": 32, "n_mels": 80, "time_frames": 1500, "hidden_size": 768},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "2_AudioConvEncoder")

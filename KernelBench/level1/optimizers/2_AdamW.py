@@ -78,6 +78,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"param_size": (4096, 4096)},
+    # Llama-3.1-8B training: AdamW step on MLP down-projection
+    {"param_size": (14336, 4096)},
+    # Mistral-7B training: attention QKV projection
+    {"param_size": (4096, 12288)},
+    # GPT-NeoX-20B training: output embedding layer
+    {"param_size": (50432, 6144)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "2_AdamW")

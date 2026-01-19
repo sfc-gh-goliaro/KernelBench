@@ -27,6 +27,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: conv output after first layer (batch=32, 64 channels, 56x56 spatial)
+    {"batch_size": 32, "dim": 200704},
+    # ResNet-101: deeper residual blocks (batch=16, 256 channels, 56x56 spatial)
+    {"batch_size": 16, "dim": 802816},
+    # ResNet-152: deepest residual blocks (batch=8, 512 channels, 28x28 spatial)
+    {"batch_size": 8, "dim": 401408},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "1_ReLU")

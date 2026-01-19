@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "in_channels": 128, "out_channels": 128, "kernel_size": 3, "length": 65536},
+    # WaveNet: audio generation upsampling layer
+    {"batch_size": 32, "in_channels": 256, "out_channels": 256, "kernel_size": 4, "length": 16000},
+    # Tacotron2: mel-spectrogram decoder
+    {"batch_size": 16, "in_channels": 512, "out_channels": 256, "kernel_size": 5, "length": 8000},
+    # HiFi-GAN: waveform generator upsampling
+    {"batch_size": 8, "in_channels": 128, "out_channels": 64, "kernel_size": 7, "length": 32000},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "16_ConvTranspose1d")

@@ -112,6 +112,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "time_frames": 300, "mel_dim": 80, "hidden_dim": 512},
+    # VoiceBox: Text-guided multilingual speech generation
+    {"batch_size": 4, "time_frames": 500, "mel_dim": 100, "hidden_dim": 768},
+    # Matcha-TTS: Fast ODE-based speech synthesis
+    {"batch_size": 16, "time_frames": 200, "mel_dim": 80, "hidden_dim": 256},
+    # E2-TTS: Embarrassingly easy text-to-speech
+    {"batch_size": 2, "time_frames": 800, "mel_dim": 128, "hidden_dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "2_FlowMatching")

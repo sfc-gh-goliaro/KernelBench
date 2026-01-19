@@ -64,6 +64,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"num_boxes": 10000},
+    # YOLOv8-Nano: image 640x640, ~8400 anchors
+    {"num_boxes": 8400},
+    # YOLOv8-Medium: image 640x640, ~8400 anchors
+    {"num_boxes": 8400},
+    # YOLOv8-XLarge: image 640x640, ~8400 anchors with more detections
+    {"num_boxes": 25200},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "8_NMS")

@@ -163,7 +163,18 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+    # Prefill-heavy: Llama-3.1-8B initial prompt processing (2048 tokens)
+    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "hidden_size": 4096, "num_heads": 32, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
+    # Prefill-heavy: Llama-3.1-8B chunked prefill (1024 token chunks)
+    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
+    # Decode-heavy: Llama-3.1-8B high-throughput decoding (1 token, 2k context)
+    {"batch_size": 64, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 8300},
+    # Decode-heavy: Llama-3.1-70B batched generation (1 token, 4k context)
+    {"batch_size": 8, "seq_len": 1, "context_len": 4096, "hidden_size": 8192, "num_heads": 64, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 2120},
+    # Decode-heavy: Mistral-7B long context decoding (1 token, 8k context)
+    {"batch_size": 16, "seq_len": 1, "context_len": 8192, "hidden_size": 4096, "num_heads": 32, "num_kv_heads": 8, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 8300},
+    # Prefill-heavy: Qwen2-VL-7B multimodal prefill (image+text, 4k tokens)
+    {"batch_size": 2, "seq_len": 4096, "context_len": 0, "hidden_size": 3584, "num_heads": 28, "num_kv_heads": 4, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 520},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "3_GroupedQueryAttention")

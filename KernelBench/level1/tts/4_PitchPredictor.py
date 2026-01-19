@@ -111,6 +111,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "seq_len": 128, "hidden_size": 256, "pitch_embedding_dim": 256},
+    # FastPitch: Parallel text-to-speech with pitch prediction
+    {"batch_size": 8, "seq_len": 200, "hidden_size": 384, "pitch_embedding_dim": 384},
+    # PortaSpeech: Portable and expressive TTS
+    {"batch_size": 32, "seq_len": 64, "hidden_size": 192, "pitch_embedding_dim": 128},
+    # VITS: End-to-end text-to-speech with adversarial learning
+    {"batch_size": 4, "seq_len": 300, "hidden_size": 512, "pitch_embedding_dim": 512},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "4_PitchPredictor")

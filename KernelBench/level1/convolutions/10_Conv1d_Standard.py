@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "in_channels": 64, "out_channels": 128, "kernel_size": 3, "length": 131072},
+    # Whisper: audio conv encoder
+    {"batch_size": 16, "in_channels": 80, "out_channels": 1024, "kernel_size": 3, "length": 3000},
+    # WaveNet: audio generation
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size": 3, "length": 16000},
+    # Temporal convolution for sequences
+    {"batch_size": 32, "in_channels": 512, "out_channels": 512, "kernel_size": 5, "length": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "10_Conv1d_Standard")

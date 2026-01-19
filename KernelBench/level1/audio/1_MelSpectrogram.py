@@ -125,7 +125,13 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "sample_rate": 16000, "duration": 30, "n_samples": sample_rate * duration, "n_mels": 80},
+    {"batch_size": 8, "sample_rate": 16000, "duration": 30, "n_samples": 480000, "n_mels": 80},
+    # Whisper-Tiny: 30s audio at 16kHz, 80 mel bins
+    {"batch_size": 16, "sample_rate": 16000, "duration": 30, "n_samples": 480000, "n_mels": 80},
+    # Whisper-Small: 30s audio at 16kHz, 80 mel bins
+    {"batch_size": 8, "sample_rate": 16000, "duration": 30, "n_samples": 480000, "n_mels": 80},
+    # Whisper-Large-v3: 30s audio at 16kHz, 128 mel bins
+    {"batch_size": 4, "sample_rate": 16000, "duration": 30, "n_samples": 480000, "n_mels": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "1_MelSpectrogram")

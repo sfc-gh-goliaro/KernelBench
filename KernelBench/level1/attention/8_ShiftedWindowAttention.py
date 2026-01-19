@@ -212,7 +212,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "height": 224, "width": 224, "channels": 96, "window_size": 7, "shift_size": 3, "num_heads": 4, "block_size": 49, "num_patches": (height // window_size) * (width // window_size), "num_blocks": batch_size * num_patches + 64},
+    # Prefill-heavy: Swin-v2-Tiny high-resolution processing (512x512)
+    {"batch_size": 4, "height": 512, "width": 512, "channels": 96, "window_size": 8, "shift_size": 4, "num_heads": 3, "block_size": 64, "num_patches": 4096, "num_blocks": 16500},
+    # Prefill-heavy: Swin-v2-Base large batch image classification (384x384)
+    {"batch_size": 16, "height": 384, "width": 384, "channels": 128, "window_size": 12, "shift_size": 6, "num_heads": 4, "block_size": 144, "num_patches": 1024, "num_blocks": 16500},
+    # Decode-heavy: Swin-v2-Tiny streaming inference small batch (224x224)
+    {"batch_size": 64, "height": 224, "width": 224, "channels": 96, "window_size": 7, "shift_size": 3, "num_heads": 4, "block_size": 49, "num_patches": 1024, "num_blocks": 65536},
+    # Decode-heavy: Swin-v2-Base real-time video frame processing (256x256)
+    {"batch_size": 32, "height": 256, "width": 256, "channels": 128, "window_size": 8, "shift_size": 4, "num_heads": 4, "block_size": 64, "num_patches": 1024, "num_blocks": 33000},
+    # Prefill-heavy: Swin-v2-Large high-quality image processing (384x384)
+    {"batch_size": 2, "height": 384, "width": 384, "channels": 192, "window_size": 12, "shift_size": 6, "num_heads": 6, "block_size": 144, "num_patches": 1024, "num_blocks": 2100},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "8_ShiftedWindowAttention")

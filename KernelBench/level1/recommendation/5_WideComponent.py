@@ -29,6 +29,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "input_dim": 1000},
+    # WDL: wide component for Google Play Store
+    {"batch_size": 2048, "input_dim": 5000},
+    # WDL: sparse wide features with cross-product transforms
+    {"batch_size": 1024, "input_dim": 10000},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "5_WideComponent")

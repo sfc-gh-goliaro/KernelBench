@@ -27,6 +27,16 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # EfficientNet-B0: SE gate (batch=32, 8 channels for squeeze)
+    {"batch_size": 32, "dim": 8},
+    # EfficientNet-B7: SE gate (batch=8, 16 channels for squeeze)
+    {"batch_size": 8, "dim": 16},
+    # ResNet-50: gating mechanism
+    {"batch_size": 32, "dim": 2048},
+    # MobileNetV3-Large: SE gate (batch=32, 576 channels)
+    {"batch_size": 32, "dim": 576},
+    # BERT-Large: gating in attention (batch=16, hidden_size=1024)
+    {"batch_size": 16, "dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "3_Sigmoid")

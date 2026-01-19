@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 3, "out_channels": 64, "kernel_size": (3, 5, 7), "width": 64, "height": 64, "depth": 64},
+    # Video: temporal vs spatial kernels
+    {"batch_size": 8, "in_channels": 64, "out_channels": 128, "kernel_size": (1, 3, 3), "width": 56, "height": 56, "depth": 8},
+    # SlowFast: fast pathway
+    {"batch_size": 8, "in_channels": 8, "out_channels": 32, "kernel_size": (5, 1, 1), "width": 56, "height": 56, "depth": 32},
+    # Medical imaging: anisotropic kernels
+    {"batch_size": 2, "in_channels": 1, "out_channels": 32, "kernel_size": (1, 7, 7), "width": 128, "height": 128, "depth": 32},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "6_Conv3d_AsymKernel")

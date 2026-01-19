@@ -29,6 +29,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"M": 4096, "N": 4096},
+    # Llama-3.1-8B: diagonal scaling in RMSNorm (hidden_size=4096)
+    {"M": 4096, "N": 4096},
+    # Llama-3.1-70B: diagonal scaling in RMSNorm (hidden_size=8192)
+    {"M": 8192, "N": 8192},
+    # GPT-3 175B: diagonal scaling (hidden_size=12288)
+    {"M": 12288, "N": 12288},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "3_DiagonalMatMul")

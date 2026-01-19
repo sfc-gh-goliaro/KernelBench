@@ -31,6 +31,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "latent_dim": 256},
+    # SDXL VAE: KL regularization for 4-channel latent
+    {"batch_size": 1, "latent_dim": 4},
+    # SD3 VAE: KL regularization for 16-channel latent
+    {"batch_size": 2, "latent_dim": 16},
+    # DALL-E 2 VAE: larger latent space KL loss
+    {"batch_size": 4, "latent_dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "2_KLDiv_Gaussian")

@@ -204,7 +204,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+    # Prefill-heavy: BLOOM-7B initial prompt processing (2048 tokens)
+    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
+    # Prefill-heavy: MPT-7B chunked prefill (1024 token chunks)
+    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
+    # Decode-heavy: Falcon-7B high-throughput decoding (1 token, 2k context)
+    {"batch_size": 64, "seq_len": 1, "context_len": 2048, "hidden_size": 4544, "num_heads": 71, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 8300},
+    # Decode-heavy: Falcon-40B batched generation (1 token, 2k context)
+    {"batch_size": 16, "seq_len": 1, "context_len": 2048, "hidden_size": 8192, "num_heads": 128, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 2100},
+    # Decode-heavy: BLOOM-176B long context decoding (1 token, 4k context)
+    {"batch_size": 4, "seq_len": 1, "context_len": 4096, "hidden_size": 14336, "num_heads": 112, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 1040},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "6_ALiBi")

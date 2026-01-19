@@ -40,6 +40,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "in_channels": 64, "out_channels": 128, "kernel_size": (3, 5), "height_in": 128, "width_in": 256},
+    # SDXL: VAE decoder with asymmetric input/kernel
+    {"batch_size": 1, "in_channels": 512, "out_channels": 512, "kernel_size": (3, 3), "height_in": 64, "width_in": 64},
+    # DeepLabV3+: ASPP upsampling with asymmetric features
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size": (3, 5), "height_in": 65, "width_in": 129},
+    # Pix2Pix: image-to-image translation decoder
+    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_size": (4, 4), "height_in": 32, "width_in": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "19_ConvTranspose2d_AsymBoth")

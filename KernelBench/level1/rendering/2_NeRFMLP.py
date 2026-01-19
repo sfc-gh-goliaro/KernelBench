@@ -123,6 +123,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 65536, "hidden_dim": 256},
+    # NeRF: Original NeRF configuration
+    {"batch_size": 131072, "hidden_dim": 256},
+    # Mip-NeRF: Higher capacity network
+    {"batch_size": 32768, "hidden_dim": 512},
+    # Instant-NGP: Smaller MLP with hash encoding
+    {"batch_size": 262144, "hidden_dim": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "2_NeRFMLP")

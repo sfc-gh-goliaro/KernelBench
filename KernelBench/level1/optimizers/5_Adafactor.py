@@ -100,7 +100,13 @@ class Model(nn.Module):
         if self.weight_decay != 0:
 
 PARAMETERS = [
-    {"param": param - self.weight_decay * lr * param},
+    {"param_size": (4096, 4096)},
+    # T5-XXL training: encoder-decoder attention weight
+    {"param_size": (4096, 1024)},
+    # PaLM-540B training: memory-efficient MLP layer
+    {"param_size": (8192, 32768)},
+    # mT5-large training: cross-attention projection
+    {"param_size": (1024, 1024)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "5_Adafactor")

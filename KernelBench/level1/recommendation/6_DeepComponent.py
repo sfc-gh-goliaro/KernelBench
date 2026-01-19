@@ -36,6 +36,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "input_dim": 416},
+    # DLRM: bottom MLP for dense feature processing
+    {"batch_size": 2048, "input_dim": 512},
+    # DeepFM: deep component for Criteo CTR
+    {"batch_size": 1024, "input_dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "6_DeepComponent")

@@ -73,7 +73,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 64, "vocab_size": 32000, "context_len": 512, "presence_penalty": 0.6, "frequency_penalty": 0.6},
+    # High-throughput: Llama-2-7B batched generation (large batch, short context)
+    {"batch_size": 128, "vocab_size": 32000, "context_len": 512, "presence_penalty": 0.6, "frequency_penalty": 0.6},
+    # High-throughput: Llama-3.1-8B high-volume inference
+    {"batch_size": 64, "vocab_size": 128256, "context_len": 1024, "presence_penalty": 0.4, "frequency_penalty": 0.5},
+    # Low-latency: Llama-3.1-8B long context creative generation
+    {"batch_size": 8, "vocab_size": 128256, "context_len": 8192, "presence_penalty": 0.8, "frequency_penalty": 0.3},
+    # Low-latency: Llama-3.1-70B extended context with high diversity
+    {"batch_size": 4, "vocab_size": 128256, "context_len": 16384, "presence_penalty": 0.7, "frequency_penalty": 0.4},
+    # Balanced: Mistral-7B standard generation
+    {"batch_size": 32, "vocab_size": 32768, "context_len": 2048, "presence_penalty": 0.5, "frequency_penalty": 0.5},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "3_PresenceFrequencyPenalty")

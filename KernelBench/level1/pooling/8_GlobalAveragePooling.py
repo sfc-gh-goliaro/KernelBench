@@ -43,6 +43,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 2048, "height": 7, "width": 7},
+    # ResNet-50: final global avg pool (2048 channels, 7x7)
+    {"batch_size": 32, "channels": 2048, "height": 7, "width": 7},
+    # EfficientNet-B4: final global avg pool (1792 channels, 12x12)
+    {"batch_size": 16, "channels": 1792, "height": 12, "width": 12},
+    # EfficientNet-B7: final global avg pool (2560 channels, 19x19)
+    {"batch_size": 8, "channels": 2560, "height": 19, "width": 19},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "8_GlobalAveragePooling")

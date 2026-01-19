@@ -88,7 +88,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Sequoia optimal tree pruning (Llama-2-7B)
     {"batch_size": 8, "num_nodes": 128, "max_nodes": 64},
+    # SpecInfer aggressive pruning (Llama-3.1-8B)
+    {"batch_size": 4, "num_nodes": 256, "max_nodes": 128},
+    # Optimal tree budget pruning (Mistral-7B)
+    {"batch_size": 16, "num_nodes": 64, "max_nodes": 32},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "9_TreePruning")

@@ -91,6 +91,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"param_size": (4096, 4096)},
+    # BERT-large distributed training: intermediate FC layer
+    {"param_size": (1024, 4096)},
+    # ViT-Huge distributed training: MLP layer (batch size 32768)
+    {"param_size": (1280, 5120)},
+    # GPT-3 style pretraining: large embedding matrix
+    {"param_size": (50257, 12288)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "4_LAMB")

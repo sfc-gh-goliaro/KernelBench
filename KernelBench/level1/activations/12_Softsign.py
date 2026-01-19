@@ -27,6 +27,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: alternative activation
+    {"batch_size": 32, "dim": 2048},
+    # ResNet-101: alternative activation
+    {"batch_size": 16, "dim": 2048},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "12_Softsign")

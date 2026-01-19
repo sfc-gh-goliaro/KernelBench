@@ -80,6 +80,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 256, "out_channels": 256, "height": 40, "width": 40},
+    # YOLOv8-n: backbone stage
+    {"batch_size": 16, "in_channels": 64, "out_channels": 64, "height": 80, "width": 80},
+    # YOLOv8-m: backbone stage
+    {"batch_size": 8, "in_channels": 192, "out_channels": 192, "height": 40, "width": 40},
+    # YOLOv8-x: backbone stage
+    {"batch_size": 4, "in_channels": 320, "out_channels": 320, "height": 20, "width": 20},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "2_C2f")

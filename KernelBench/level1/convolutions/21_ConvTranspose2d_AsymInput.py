@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 32, "out_channels": 32, "kernel_size": 3, "height_in": 512, "width_in": 1024},
+    # SDXL: VAE decoder block for wide aspect ratio images
+    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": 3, "height_in": 64, "width_in": 128},
+    # U-Net: decoder with rectangular feature maps
+    {"batch_size": 4, "in_channels": 256, "out_channels": 128, "kernel_size": 4, "height_in": 128, "width_in": 256},
+    # FCN-ResNet: semantic segmentation upsampling
+    {"batch_size": 2, "in_channels": 2048, "out_channels": 512, "kernel_size": 3, "height_in": 32, "width_in": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "21_ConvTranspose2d_AsymInput")

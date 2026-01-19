@@ -34,6 +34,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: after conv blocks (batch=32, 256 channels, 56x56 spatial)
+    {"batch_size": 32, "dim": 802816},
+    # ResNet-101: after conv blocks (batch=16, 512 channels, 28x28)
+    {"batch_size": 16, "dim": 401408},
+    # VGG-16: after conv layers (batch=32, 512 channels, 7x7 spatial)
+    {"batch_size": 32, "dim": 25088},
+    # DenseNet-121: dense block output (batch=32, 1024 channels)
+    {"batch_size": 32, "dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "2_LeakyReLU")

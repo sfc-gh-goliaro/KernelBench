@@ -21,6 +21,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32768, "input_shape": (32768,), "dim": 1},
+    # BERT-base: hidden state regression (768 dim embeddings)
+    {"batch_size": 8192, "input_shape": (768,), "dim": 1},
+    # ResNet-50: regression head training (2048 dim features)
+    {"batch_size": 4096, "input_shape": (2048,), "dim": 1},
+    # GPT-2-medium: hidden state prediction (1024 dim)
+    {"batch_size": 2048, "input_shape": (1024,), "dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "1_MSELoss")

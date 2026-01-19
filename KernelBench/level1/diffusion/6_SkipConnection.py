@@ -90,7 +90,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # SD1.5: mid-resolution skip (512x512 image, 32x32 latent)
     {"batch_size": 4, "encoder_channels": 512, "decoder_channels": 512, "out_channels": 512, "height": 32, "width": 32},
+    # SD1.5: high-resolution skip (512x512 image, 64x64 latent)
+    {"batch_size": 8, "encoder_channels": 320, "decoder_channels": 320, "out_channels": 320, "height": 64, "width": 64},
+    # SDXL: bottleneck skip (1024x1024 image, 16x16 latent at bottleneck)
+    {"batch_size": 4, "encoder_channels": 1280, "decoder_channels": 1280, "out_channels": 1280, "height": 16, "width": 16},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "6_SkipConnection")

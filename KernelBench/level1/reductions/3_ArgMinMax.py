@@ -43,6 +43,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 128, "dim1": 4096, "dim2": 4095},
+    # Llama-3.1-8B: top-k token selection indices
+    {"batch_size": 32, "dim1": 4096, "dim2": 128256},
+    # GPT-NeoX-20B: vocabulary argmax for generation
+    {"batch_size": 16, "dim1": 6144, "dim2": 50432},
+    # Gemma-7B: attention head selection
+    {"batch_size": 64, "dim1": 3072, "dim2": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("reductions", "3_ArgMinMax")

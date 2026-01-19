@@ -34,6 +34,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 128, "dim1": 4096, "dim2": 4095, "reduce_dim": 1},
+    # Llama-3.1-8B: hidden state reduction across sequence
+    {"batch_size": 32, "dim1": 4096, "dim2": 8192, "reduce_dim": 1},
+    # GPT-2-XL: attention score aggregation
+    {"batch_size": 64, "dim1": 1600, "dim2": 2048, "reduce_dim": 2},
+    # Mistral-7B: MLP intermediate sum
+    {"batch_size": 16, "dim1": 14336, "dim2": 4096, "reduce_dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("reductions", "1_Sum")

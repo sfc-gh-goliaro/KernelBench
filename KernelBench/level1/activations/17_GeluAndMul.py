@@ -55,6 +55,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "intermediate_size": 14336},
+    # Qwen2-VL-2B: intermediate_size=8960
+    {"batch_size": 16, "seq_length": 2048, "intermediate_size": 8960},
+    # Qwen2-VL-7B: intermediate_size=18944
+    {"batch_size": 8, "seq_length": 2048, "intermediate_size": 18944},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "17_GeluAndMul")

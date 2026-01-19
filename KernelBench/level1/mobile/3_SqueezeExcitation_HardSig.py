@@ -56,6 +56,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 96, "height": 56, "width": 56},
+    # MobileNetV3-Large: SE in MBConv (72 channels, 56x56)
+    {"batch_size": 32, "channels": 72, "height": 56, "width": 56},
+    # MobileNetV3-Large: SE in MBConv (120 channels, 28x28)
+    {"batch_size": 32, "channels": 120, "height": 28, "width": 28},
+    # MobileNetV3-Small: SE in MBConv (96 channels, 14x14)
+    {"batch_size": 32, "channels": 96, "height": 14, "width": 14},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("mobile", "3_SqueezeExcitation_HardSig")

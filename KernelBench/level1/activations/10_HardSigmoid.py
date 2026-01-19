@@ -27,6 +27,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # EfficientNet-B0: SE block squeeze (stem_channels=32, reduced by 4)
+    {"batch_size": 32, "dim": 8},
+    # EfficientNet-B4: SE block squeeze (stem_channels=48)
+    {"batch_size": 16, "dim": 12},
+    # EfficientNet-B7: SE block squeeze (stem_channels=64)
+    {"batch_size": 8, "dim": 16},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "10_HardSigmoid")

@@ -43,6 +43,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 128, "dim1": 4096, "dim2": 4095},
+    # Llama-3.1-8B: max pooling over hidden states
+    {"batch_size": 32, "dim1": 4096, "dim2": 8192},
+    # BERT-Large: min/max normalization bounds
+    {"batch_size": 64, "dim1": 1024, "dim2": 512},
+    # Falcon-40B: activation clamping reduction
+    {"batch_size": 8, "dim1": 8192, "dim2": 16384},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("reductions", "2_MinMax")

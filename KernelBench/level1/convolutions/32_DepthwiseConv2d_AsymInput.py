@@ -37,6 +37,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "in_channels": 128, "out_channels": 128, "kernel_size": 3, "width_in": 512, "height_in": 256, "stride": 1, "padding": 0},
+    # MobileNetV2: depthwise separable conv for mobile inference
+    {"batch_size": 32, "in_channels": 96, "out_channels": 96, "kernel_size": 3, "width_in": 56, "height_in": 112, "stride": 1, "padding": 1},
+    # EfficientNet-B4: compound scaled depthwise conv
+    {"batch_size": 16, "in_channels": 160, "out_channels": 160, "kernel_size": 5, "width_in": 28, "height_in": 14, "stride": 1, "padding": 2},
+    # MobileViT: mobile vision transformer depthwise layer
+    {"batch_size": 8, "in_channels": 384, "out_channels": 384, "kernel_size": 3, "width_in": 16, "height_in": 8, "stride": 1, "padding": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "32_DepthwiseConv2d_AsymInput")

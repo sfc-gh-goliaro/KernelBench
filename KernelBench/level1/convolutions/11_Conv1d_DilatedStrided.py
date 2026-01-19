@@ -37,6 +37,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "in_channels": 64, "out_channels": 128, "kernel_size": 3, "length": 524280, "stride": 3, "dilation": 4},
+    # WaveNet: dilated causal convolution
+    {"batch_size": 16, "in_channels": 256, "out_channels": 256, "kernel_size": 3, "length": 16000, "stride": 1, "dilation": 2},
+    # TCN: temporal convolution
+    {"batch_size": 32, "in_channels": 128, "out_channels": 128, "kernel_size": 5, "length": 4096, "stride": 1, "dilation": 4},
+    # Audio downsampling
+    {"batch_size": 16, "in_channels": 80, "out_channels": 512, "kernel_size": 3, "length": 3000, "stride": 2, "dilation": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "11_Conv1d_DilatedStrided")

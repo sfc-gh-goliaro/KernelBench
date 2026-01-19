@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"M": 4096},
+    # Llama-3.1-8B: lower triangular attention (seq_len=4096)
+    {"M": 4096},
+    # GPT-2 XL: lower triangular attention (seq_len=1024)
+    {"M": 1024},
+    # Llama-3.1-70B: lower triangular attention (seq_len=8192)
+    {"M": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "6_LowerTriangularMatMul")

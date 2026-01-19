@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 64, "out_channels": 64, "kernel_size": 3, "height": 1024, "width": 1024},
+    # U-Net: decoder upsampling
+    {"batch_size": 8, "in_channels": 256, "out_channels": 128, "kernel_size": 2, "height": 64, "width": 64},
+    # SDXL: VAE decoder
+    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_size": 4, "height": 32, "width": 32},
+    # GAN generator: upsampling
+    {"batch_size": 16, "in_channels": 128, "out_channels": 64, "kernel_size": 4, "height": 128, "width": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "13_ConvTranspose2d_Square")

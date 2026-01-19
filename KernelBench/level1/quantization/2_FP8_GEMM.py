@@ -93,6 +93,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 4096},
+    # Llama-3.1-8B: FP8 inference FFN down-projection
+    {"batch_size": 4, "seq_length": 4096, "in_features": 14336, "out_features": 4096},
+    # Mistral-7B: FP8 training forward pass
+    {"batch_size": 16, "seq_length": 1024, "in_features": 4096, "out_features": 14336},
+    # Qwen-2-72B: FP8 attention output projection
+    {"batch_size": 2, "seq_length": 8192, "in_features": 8192, "out_features": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "2_FP8_GEMM")

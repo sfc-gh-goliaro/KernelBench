@@ -107,7 +107,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096, "num_heads": 32},
+    # Prefill-heavy: GLA-7B initial prompt processing (4096 tokens)
+    {"batch_size": 4, "seq_length": 4096, "hidden_size": 4096, "num_heads": 16},
+    # Prefill-heavy: GLA-1.3B long context prefill (8192 tokens)
+    {"batch_size": 2, "seq_length": 8192, "hidden_size": 2048, "num_heads": 8},
+    # Decode-heavy: GLA-1.3B autoregressive generation (1 token per step)
+    {"batch_size": 64, "seq_length": 1, "hidden_size": 2048, "num_heads": 8},
+    # Decode-heavy: GLA-7B batched token generation (1 token)
+    {"batch_size": 128, "seq_length": 1, "hidden_size": 4096, "num_heads": 16},
+    # Decode-heavy: GLA-13B high-throughput decoding (1 token)
+    {"batch_size": 32, "seq_length": 1, "hidden_size": 5120, "num_heads": 20},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "5_GLA_Recurrence")

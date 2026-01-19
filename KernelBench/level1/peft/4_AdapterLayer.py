@@ -133,18 +133,33 @@ class Model(nn.Module):
 # Benchmark Configuration (Multi-tenant serving scenario)
 # ============================================================================
 
-total_tokens = 8192
-hidden_size = 4096
-num_adapters = 100
-# Heterogeneous adapter sizes
-adapter_sizes = [32, 64, 128] * 33 + [64]
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 
-def get_inputs():
-    """Generate input tensors for multi-tenant adapter benchmarking."""
-    x = torch.randn(total_tokens, hidden_size, device='cuda')
-    adapter_ids = torch.randint(0, num_adapters, (total_tokens,), device='cuda')
+PARAMETERS = [
+    {"total_tokens": 8192, "hidden_size": 4096, "num_adapters": 100, "adapter_sizes": [32, 64, 128] * 33 + [64]},
+    # Llama-3.1-8B: hidden_size=4096, multi-tenant adapter serving
+    {"total_tokens": 4096, "hidden_size": 4096, "num_adapters": 50, "adapter_sizes": [64] * 50},
+    # Llama-3.1-70B: hidden_size=8192, multi-tenant adapter serving
+    {"total_tokens": 2048, "hidden_size": 8192, "num_adapters": 20, "adapter_sizes": [64] * 20},
+    # Mistral-7B: hidden_size=4096, multi-tenant adapter serving
+    {"total_tokens": 8192, "hidden_size": 4096, "num_adapters": 100, "adapter_sizes": [32, 64] * 50},
+    # T5-3B: hidden_size=1024, multi-tenant adapter serving
+    {"total_tokens": 4096, "hidden_size": 1024, "num_adapters": 100, "adapter_sizes": [64] * 100},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("peft", "4_AdapterLayer")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["total_tokens"], p["hidden_size"]), dtype=dtype, device=device)
+    adapter_ids = torch.randint(0, p["num_adapters"], (p["total_tokens"],), device=device)
     return [x, adapter_ids]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [hidden_size, num_adapters, adapter_sizes]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["hidden_size"], p["num_adapters"], p["adapter_sizes"]]

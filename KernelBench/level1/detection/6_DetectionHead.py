@@ -51,6 +51,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 256, "num_classes": 80, "height": 80, "width": 80},
+    # YOLOv5-n: detection head P3
+    {"batch_size": 16, "in_channels": 128, "num_classes": 80, "height": 80, "width": 80},
+    # YOLOv5-l: detection head P4
+    {"batch_size": 8, "in_channels": 256, "num_classes": 80, "height": 40, "width": 40},
+    # YOLOv5-x: detection head P5
+    {"batch_size": 4, "in_channels": 512, "num_classes": 80, "height": 20, "width": 20},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "6_DetectionHead")

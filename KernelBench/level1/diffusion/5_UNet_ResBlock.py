@@ -89,7 +89,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # SD1.5: first down block, 512x512 image (64x64 latent)
     {"batch_size": 8, "in_channels": 320, "out_channels": 320, "height": 64, "width": 64, "time_dim": 1280},
+    # SD1.5: mid block (bottleneck), 512x512 image (8x8 latent at bottleneck)
+    {"batch_size": 8, "in_channels": 1280, "out_channels": 1280, "height": 8, "width": 8, "time_dim": 1280},
+    # SDXL: deep block with channel expansion, 1024x1024 image (16x16 latent)
+    {"batch_size": 4, "in_channels": 1280, "out_channels": 2560, "height": 16, "width": 16, "time_dim": 1280},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "5_UNet_ResBlock")

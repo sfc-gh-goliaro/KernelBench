@@ -35,6 +35,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: alternative activation
+    {"batch_size": 32, "dim": 2048},
+    # EfficientNet-B7: alternative activation
+    {"batch_size": 8, "dim": 2560},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "13_ELU")

@@ -72,6 +72,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "high_channels": 512, "low_channels": 256, "out_channels": 256},
+    # YOLOv5-s: FPN concat
+    {"batch_size": 16, "high_channels": 256, "low_channels": 128, "out_channels": 128},
+    # YOLOv5-l: FPN concat
+    {"batch_size": 8, "high_channels": 512, "low_channels": 256, "out_channels": 256},
+    # RetinaNet: FPN concat
+    {"batch_size": 4, "high_channels": 256, "low_channels": 256, "out_channels": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "4_FPN_Concat")

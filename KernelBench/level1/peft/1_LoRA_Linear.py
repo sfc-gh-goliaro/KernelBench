@@ -138,19 +138,33 @@ class Model(nn.Module):
 # Benchmark Configuration (Multi-tenant serving scenario)
 # ============================================================================
 
-total_tokens = 8192
-in_features = 4096
-out_features = 4096
-num_adapters = 100
-# Heterogeneous ranks for realistic multi-tenant workload
-adapter_ranks = [8, 16, 32, 64] * 25
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task_params import DISTRIBUTIONS, get_supported_distributions
 
-def get_inputs():
-    """Generate input tensors for multi-tenant LoRA benchmarking."""
-    x = torch.randn(total_tokens, in_features, device='cuda')
-    adapter_ids = torch.randint(0, num_adapters, (total_tokens,), device='cuda')
+PARAMETERS = [
+    {"total_tokens": 8192, "in_features": 4096, "out_features": 4096, "num_adapters": 100, "adapter_ranks": [8, 16, 32, 64] * 25},
+    # Llama-3.1-8B: hidden_size=4096, multi-tenant LoRA serving
+    {"total_tokens": 4096, "in_features": 4096, "out_features": 4096, "num_adapters": 50, "adapter_ranks": [16] * 50},
+    # Llama-3.1-8B: FFN intermediate projection (4096->14336)
+    {"total_tokens": 4096, "in_features": 4096, "out_features": 14336, "num_adapters": 50, "adapter_ranks": [16] * 50},
+    # Llama-3.1-70B: hidden_size=8192, multi-tenant LoRA serving
+    {"total_tokens": 2048, "in_features": 8192, "out_features": 8192, "num_adapters": 20, "adapter_ranks": [16] * 20},
+    # Mistral-7B: hidden_size=4096, multi-tenant LoRA serving
+    {"total_tokens": 8192, "in_features": 4096, "out_features": 4096, "num_adapters": 100, "adapter_ranks": [8, 32] * 50},
+]
+
+SUPPORTED_DISTRIBUTIONS = get_supported_distributions("peft", "1_LoRA_Linear")
+
+def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
+    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
+    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
+    p = PARAMETERS[param_idx]
+    x = DISTRIBUTIONS[dist_name]((p["total_tokens"], p["in_features"]), dtype=dtype, device=device)
+    adapter_ids = torch.randint(0, p["num_adapters"], (p["total_tokens"],), device=device)
     return [x, adapter_ids]
 
-def get_init_inputs():
-    """Return initialization arguments for the Model class."""
-    return [in_features, out_features, num_adapters, adapter_ranks]
+def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
+    p = PARAMETERS[param_idx]
+    return [p["in_features"], p["out_features"], p["num_adapters"], p["adapter_ranks"]]

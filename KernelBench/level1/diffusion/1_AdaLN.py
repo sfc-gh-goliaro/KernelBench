@@ -71,6 +71,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 1024, "hidden_size": 1152, "cond_dim": 1152},
+    # SDXL-Turbo: hidden_size=1280, image 512x512 (patches = 1024)
+    {"batch_size": 8, "seq_length": 1024, "hidden_size": 1280, "cond_dim": 1280},
+    # SDXL-Lightning: hidden_size=1280, image 1024x1024 (patches = 4096)
+    {"batch_size": 4, "seq_length": 4096, "hidden_size": 1280, "cond_dim": 1280},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "1_AdaLN")

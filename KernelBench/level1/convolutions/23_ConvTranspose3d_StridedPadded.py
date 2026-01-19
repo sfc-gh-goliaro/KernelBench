@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4, "in_channels": 32, "out_channels": 32, "kernel_size": 3, "depth": 32, "height": 64, "width": 128, "stride": 2, "padding": 1, "groups": 4},
+    # 3D-UNet: medical imaging decoder with strided upsampling
+    {"batch_size": 2, "in_channels": 256, "out_channels": 128, "kernel_size": 2, "depth": 16, "height": 32, "width": 32, "stride": 2, "padding": 0, "groups": 1},
+    # NeRF-Video: neural radiance field temporal decoder
+    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": 4, "depth": 8, "height": 16, "width": 16, "stride": 2, "padding": 1, "groups": 4},
+    # Video-Diffusion: video generation model decoder
+    {"batch_size": 4, "in_channels": 320, "out_channels": 320, "kernel_size": 3, "depth": 8, "height": 32, "width": 32, "stride": 2, "padding": 1, "groups": 4},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "23_ConvTranspose3d_StridedPadded")

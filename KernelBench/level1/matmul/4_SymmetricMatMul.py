@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"N": 4096},
+    # Llama-3.1-8B: symmetric attention pattern (hidden_size=4096)
+    {"N": 4096},
+    # Llama-3.1-70B: symmetric attention pattern (hidden_size=8192)
+    {"N": 8192},
+    # Mistral-7B: symmetric covariance matrix (hidden_size=4096)
+    {"N": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "4_SymmetricMatMul")

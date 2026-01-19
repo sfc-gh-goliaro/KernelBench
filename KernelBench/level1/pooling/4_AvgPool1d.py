@@ -36,6 +36,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "in_channels": 128, "input_length": 65536, "kernel_size": 8, "stride": 1, "padding": 4},
+    # Wav2Vec 2.0: feature aggregation layer (768 channels, audio segments)
+    {"batch_size": 32, "in_channels": 768, "input_length": 8000, "kernel_size": 4, "stride": 2, "padding": 1},
+    # HuBERT: temporal averaging (1024 channels, speech frames)
+    {"batch_size": 16, "in_channels": 1024, "input_length": 4096, "kernel_size": 3, "stride": 1, "padding": 1},
+    # WaveGlow: audio synthesis pooling (256 channels, long sequences)
+    {"batch_size": 8, "in_channels": 256, "input_length": 32000, "kernel_size": 8, "stride": 4, "padding": 2},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "4_AvgPool1d")

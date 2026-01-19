@@ -27,6 +27,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # Qwen2-VL-7B vision encoder: vision_hidden=1280
+    {"batch_size": 8, "dim": 1280},
+    # Qwen2-VL-7B text: intermediate_size=18944
+    {"batch_size": 8, "dim": 18944},
+    # Qwen2-VL-2B: intermediate_size=8960
+    {"batch_size": 16, "dim": 8960},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "8_GELU")

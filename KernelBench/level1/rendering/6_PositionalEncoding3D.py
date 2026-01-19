@@ -87,6 +87,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 65536, "num_frequencies": 10},
+    # NeRF: Original positional encoding configuration
+    {"batch_size": 131072, "num_frequencies": 10},
+    # Mip-NeRF: Integrated positional encoding
+    {"batch_size": 32768, "num_frequencies": 16},
+    # Neural SDF: Higher frequencies for surface detail
+    {"batch_size": 65536, "num_frequencies": 6},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "6_PositionalEncoding3D")

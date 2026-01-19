@@ -76,7 +76,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # DiT-XL/2: original DiT base config
     {"batch_size": 8, "seq_length": 1024, "hidden_size": 1152, "cond_dim": 1152},
+    # DiT-L/2: smaller variant, 256x256 images (patches = 256)
+    {"batch_size": 16, "seq_length": 256, "hidden_size": 1024, "cond_dim": 1024},
+    # SD3-Medium: hidden_size=1536, 1024x1024 images (patches = 4096)
+    {"batch_size": 4, "seq_length": 4096, "hidden_size": 1536, "cond_dim": 1536},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "2_AdaLN_Zero")

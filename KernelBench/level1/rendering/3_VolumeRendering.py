@@ -88,6 +88,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_samples": 128},
+    # NeRF: Coarse network sampling
+    {"batch_size": 8192, "num_samples": 64},
+    # Mip-NeRF 360: Fine sampling for unbounded scenes
+    {"batch_size": 4096, "num_samples": 256},
+    # Neural Volumes: Dense sampling for volumetric video
+    {"batch_size": 2048, "num_samples": 512},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "3_VolumeRendering")

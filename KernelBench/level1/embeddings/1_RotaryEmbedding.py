@@ -97,6 +97,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "num_heads": 32, "head_dim": 128},
+    # Llama-3.1-8B: hidden_size=4096, num_heads=32, head_dim=128
+    {"batch_size": 8, "seq_length": 4096, "num_heads": 32, "head_dim": 128},
+    # Llama-3.1-70B: hidden_size=8192, num_heads=64, head_dim=128
+    {"batch_size": 4, "seq_length": 4096, "num_heads": 64, "head_dim": 128},
+    # Mistral-7B-v0.3: hidden_size=4096, num_heads=32, head_dim=128
+    {"batch_size": 8, "seq_length": 4096, "num_heads": 32, "head_dim": 128},
+    # Qwen2-VL-7B: num_heads=28, head_dim=128
+    {"batch_size": 8, "seq_length": 2048, "num_heads": 28, "head_dim": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "1_RotaryEmbedding")

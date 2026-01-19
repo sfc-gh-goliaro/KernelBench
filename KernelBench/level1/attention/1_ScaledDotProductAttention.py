@@ -15,7 +15,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 32, "num_heads": 32, "sequence_length": 512, "embedding_dimension": 1024},
+    # Prefill-heavy: Llama-3.1-8B prefill with long context
+    {"batch_size": 4, "num_heads": 32, "sequence_length": 2048, "embedding_dimension": 128},
+    # Prefill-heavy: Llama-3.1-8B prefill with medium context
+    {"batch_size": 8, "num_heads": 32, "sequence_length": 1024, "embedding_dimension": 128},
+    # Decode-heavy: Llama-3.1-8B single token generation (Q=1, KV=context)
+    {"batch_size": 64, "num_heads": 32, "sequence_length": 1, "embedding_dimension": 128},
+    # Decode-heavy: Mistral-7B batched decoding (Q=1, KV=context)
+    {"batch_size": 128, "num_heads": 32, "sequence_length": 1, "embedding_dimension": 128},
+    # Prefill-heavy: ViT-L/14 image patches (196 patches)
+    {"batch_size": 32, "num_heads": 16, "sequence_length": 197, "embedding_dimension": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "1_ScaledDotProductAttention")

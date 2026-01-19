@@ -27,6 +27,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: normalization in hidden layers
+    {"batch_size": 32, "dim": 2048},
+    # ResNet-101: normalization in hidden layers
+    {"batch_size": 16, "dim": 2048},
+    # LSTM language model: hidden state activation (batch=64, hidden_size=1024)
+    {"batch_size": 64, "dim": 1024},
+    # GRU seq2seq: hidden state activation (batch=32, hidden_size=512)
+    {"batch_size": 32, "dim": 512},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "4_Tanh")

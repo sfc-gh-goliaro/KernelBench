@@ -86,6 +86,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "in_channels": 256, "out_channels": 256, "height": 28, "width": 28, "stride": 1, "downsample": False},
+    # ResNet-50 Stage 3: 512-channel block
+    {"batch_size": 32, "in_channels": 512, "out_channels": 512, "height": 14, "width": 14, "stride": 1, "downsample": False},
+    # ResNet-101 Stage 4: 1024-channel with downsampling
+    {"batch_size": 16, "in_channels": 1024, "out_channels": 1024, "height": 14, "width": 14, "stride": 2, "downsample": True},
+    # WideResNet-28-10: wide channels at Stage 2
+    {"batch_size": 64, "in_channels": 160, "out_channels": 320, "height": 16, "width": 16, "stride": 2, "downsample": True},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "8_ResidualBlock")

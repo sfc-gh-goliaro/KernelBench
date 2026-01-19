@@ -170,7 +170,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_len": 1, "context_len": 4096, "hidden_size": 4096, "num_heads": 32, "window_size": 4096, "block_size": 16, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+    # Prefill-heavy: Mistral-7B initial prompt processing (2048 tokens within window)
+    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "hidden_size": 4096, "num_heads": 32, "window_size": 4096, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
+    # Prefill-heavy: Mistral-7B chunked prefill (1024 token chunks)
+    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "window_size": 4096, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
+    # Decode-heavy: Mistral-7B high-throughput decoding (1 token, 4k context)
+    {"batch_size": 64, "seq_len": 1, "context_len": 4096, "hidden_size": 4096, "num_heads": 32, "window_size": 4096, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 16500},
+    # Decode-heavy: Mixtral-8x7B batched generation (1 token, 8k context)
+    {"batch_size": 16, "seq_len": 1, "context_len": 8192, "hidden_size": 4096, "num_heads": 32, "window_size": 4096, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 8300},
+    # Decode-heavy: Gemma-2-27B long context decoding (1 token, 8k context, window=4096)
+    {"batch_size": 8, "seq_len": 1, "context_len": 8192, "hidden_size": 4608, "num_heads": 32, "window_size": 4096, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 4200},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "7_SlidingWindowAttention")

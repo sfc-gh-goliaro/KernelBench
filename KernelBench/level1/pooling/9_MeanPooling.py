@@ -55,6 +55,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "seq_length": 512, "hidden_size": 768},
+    # BERT-base: sentence embedding pooling (768 hidden, 512 seq)
+    {"batch_size": 64, "seq_length": 512, "hidden_size": 768},
+    # E5-large: embedding model pooling (1024 hidden, 512 seq)
+    {"batch_size": 32, "seq_length": 512, "hidden_size": 1024},
+    # BGE-large-en: embedding model pooling (1024 hidden, 8192 seq for long context)
+    {"batch_size": 8, "seq_length": 8192, "hidden_size": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "9_MeanPooling")

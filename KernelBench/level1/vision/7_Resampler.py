@@ -101,6 +101,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "num_vision_tokens": 576, "vision_dim": 1024, "output_dim": 4096, "num_queries": 64},
+    # Qwen-VL: 256 queries for dense resampling
+    {"batch_size": 4, "num_vision_tokens": 1024, "vision_dim": 1664, "output_dim": 4096, "num_queries": 256},
+    # Flamingo-3B: OpenCLIP to LLM projection
+    {"batch_size": 8, "num_vision_tokens": 256, "vision_dim": 1024, "output_dim": 2560, "num_queries": 64},
+    # Idefics-80B: large model configuration
+    {"batch_size": 2, "num_vision_tokens": 576, "vision_dim": 1280, "output_dim": 8192, "num_queries": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "7_Resampler")

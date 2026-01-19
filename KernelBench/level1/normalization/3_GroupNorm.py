@@ -35,6 +35,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 112, "features": 64, "num_groups": 8, "dim1": 512, "dim2": 512},
+    # SDXL-Turbo: UNet ResBlock (320 channels, 32 groups, 64x64)
+    {"batch_size": 8, "features": 320, "num_groups": 32, "dim1": 64, "dim2": 64},
+    # SDXL-Lightning: UNet ResBlock (1280 channels, 32 groups, 16x16)
+    {"batch_size": 4, "features": 1280, "num_groups": 32, "dim1": 16, "dim2": 16},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "3_GroupNorm")

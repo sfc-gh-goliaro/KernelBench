@@ -330,7 +330,16 @@ def generate_tree_structure(num_draft: int, branching_factor: int = 2,
 
 
 PARAMETERS = [
-    {"batch_size": 8, "context_len": 2048, "num_draft_tokens": 63, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "branching_factor": 2, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+    # Low-latency: Llama-3.1-8B deep tree for maximum speculation (127 drafts)
+    {"batch_size": 4, "context_len": 4096, "num_draft_tokens": 127, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "branching_factor": 3, "max_blocks_per_seq": 256, "num_blocks": 1088},
+    # Low-latency: Llama-3.1-70B with EAGLE deep tree (long context)
+    {"batch_size": 2, "context_len": 8192, "num_draft_tokens": 63, "hidden_size": 8192, "num_heads": 64, "block_size": 16, "branching_factor": 2, "max_blocks_per_seq": 512, "num_blocks": 1100},
+    # High-throughput: Llama-2-7B batched verification (smaller tree, larger batch)
+    {"batch_size": 64, "context_len": 2048, "num_draft_tokens": 7, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "branching_factor": 2, "max_blocks_per_seq": 128, "num_blocks": 8300},
+    # High-throughput: Mistral-7B high-volume inference (moderate tree)
+    {"batch_size": 32, "context_len": 1024, "num_draft_tokens": 15, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "branching_factor": 2, "max_blocks_per_seq": 64, "num_blocks": 2100},
+    # Balanced: Llama-3.1-8B with Medusa standard tree
+    {"batch_size": 16, "context_len": 2048, "num_draft_tokens": 31, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "branching_factor": 2, "max_blocks_per_seq": 128, "num_blocks": 2100},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "1_TreeAttention")

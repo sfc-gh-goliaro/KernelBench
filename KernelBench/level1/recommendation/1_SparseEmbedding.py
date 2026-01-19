@@ -30,6 +30,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_features": 26, "vocab_size": 1000000, "embed_dim": 16},
+    # DLRM: embedding lookup for Criteo dataset
+    {"batch_size": 2048, "num_features": 26, "vocab_size": 10000000, "embed_dim": 64},
+    # NCF: user/item embeddings for MovieLens
+    {"batch_size": 1024, "num_features": 2, "vocab_size": 500000, "embed_dim": 32},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "1_SparseEmbedding")

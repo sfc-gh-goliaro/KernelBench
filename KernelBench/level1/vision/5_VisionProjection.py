@@ -61,6 +61,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "num_patches": 576, "vision_dim": 1024, "llm_dim": 4096},
+    # LLaVA-1.5: CLIP ViT-L/14 to Vicuna-7B
+    {"batch_size": 4, "num_patches": 576, "vision_dim": 1024, "llm_dim": 4096},
+    # Qwen-VL: OpenCLIP ViT-G to Qwen-7B
+    {"batch_size": 4, "num_patches": 256, "vision_dim": 1664, "llm_dim": 4096},
+    # InternVL-1.5: InternViT-6B to InternLM2-Chat-20B
+    {"batch_size": 2, "num_patches": 256, "vision_dim": 3200, "llm_dim": 5120},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "5_VisionProjection")

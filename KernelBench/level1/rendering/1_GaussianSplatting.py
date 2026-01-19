@@ -127,6 +127,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"num_gaussians": 10000, "image_height": 512, "image_width": 512},
+    # 3DGS: Standard Gaussian splatting scene
+    {"num_gaussians": 50000, "image_height": 800, "image_width": 800},
+    # 4D Gaussians: Dynamic scene with more primitives
+    {"num_gaussians": 150000, "image_height": 1080, "image_width": 1920},
+    # 3DGS-Avatar: High-fidelity human rendering
+    {"num_gaussians": 200000, "image_height": 1024, "image_width": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "1_GaussianSplatting")

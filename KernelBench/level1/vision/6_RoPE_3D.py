@@ -128,6 +128,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 576, "num_heads": 32, "head_dim": 96},
+    # Qwen2-VL-2B: smaller sequence, fewer heads
+    {"batch_size": 16, "seq_length": 256, "num_heads": 16, "head_dim": 96},
+    # Qwen2-VL-7B: medium video sequence
+    {"batch_size": 4, "seq_length": 1024, "num_heads": 28, "head_dim": 96},
+    # Qwen2-VL-72B: large model, more heads
+    {"batch_size": 2, "seq_length": 576, "num_heads": 64, "head_dim": 96},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "6_RoPE_3D")

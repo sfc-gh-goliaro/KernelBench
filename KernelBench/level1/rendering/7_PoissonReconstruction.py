@@ -119,6 +119,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 2, "num_points": 10000, "grid_size": 64},
+    # NeuS: Neural implicit surface reconstruction
+    {"batch_size": 4, "num_points": 50000, "grid_size": 128},
+    # VolSDF: Volume-based SDF learning
+    {"batch_size": 2, "num_points": 100000, "grid_size": 256},
+    # NeuralAngelo: High-resolution surface extraction
+    {"batch_size": 1, "num_points": 200000, "grid_size": 512},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "7_PoissonReconstruction")

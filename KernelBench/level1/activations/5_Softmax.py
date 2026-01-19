@@ -27,6 +27,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # Llama-3.1-8B: vocab_size=128256 for output logits
+    {"batch_size": 8, "dim": 128256},
+    # Llama-3.1-70B: vocab_size=128256 for output logits
+    {"batch_size": 4, "dim": 128256},
+    # T5-Base: vocab_size=32128
+    {"batch_size": 16, "dim": 32128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "5_Softmax")

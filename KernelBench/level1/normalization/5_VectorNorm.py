@@ -57,6 +57,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 128, "features": 64, "dim1": 256, "dim2": 256},
+    # ResNet-50: L2 norm on feature maps before classification
+    {"batch_size": 32, "features": 2048, "dim1": 7, "dim2": 7},
+    # ResNet-101: L2 norm on feature maps
+    {"batch_size": 16, "features": 2048, "dim1": 7, "dim2": 7},
+    # CLIP ViT-L: image embeddings normalization (768 dim)
+    {"batch_size": 64, "features": 768, "dim1": 1, "dim2": 1},
+    # BGE-M3: embedding normalization (1024 dim)
+    {"batch_size": 32, "features": 1024, "dim1": 1, "dim2": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "5_VectorNorm")

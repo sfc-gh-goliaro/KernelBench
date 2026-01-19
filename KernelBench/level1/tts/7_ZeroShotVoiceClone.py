@@ -96,6 +96,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "n_mels": 80, "ref_frames": 300, "speaker_dim": 256},
+    # VALL-E: Zero-shot TTS via neural codec language model
+    {"batch_size": 8, "n_mels": 80, "ref_frames": 500, "speaker_dim": 512},
+    # YourTTS: Multilingual zero-shot voice cloning
+    {"batch_size": 32, "n_mels": 80, "ref_frames": 200, "speaker_dim": 192},
+    # OpenVoice: Versatile instant voice cloning
+    {"batch_size": 4, "n_mels": 100, "ref_frames": 400, "speaker_dim": 384},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "7_ZeroShotVoiceClone")

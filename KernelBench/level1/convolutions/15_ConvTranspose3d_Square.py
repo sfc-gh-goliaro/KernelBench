@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 48, "out_channels": 48, "kernel_size": 3, "depth": 64, "height": 64, "width": 64},
+    # Video-ResNet: 3D upsampling layer in video generation decoder
+    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_size": 4, "depth": 8, "height": 16, "width": 16},
+    # 3D-UNet: decoder block for medical imaging segmentation
+    {"batch_size": 2, "in_channels": 256, "out_channels": 128, "kernel_size": 2, "depth": 32, "height": 32, "width": 32},
+    # C3D: video classification upsampling
+    {"batch_size": 8, "in_channels": 128, "out_channels": 64, "kernel_size": 3, "depth": 16, "height": 56, "width": 56},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "15_ConvTranspose3d_Square")

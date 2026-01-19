@@ -36,6 +36,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "channels": 3, "height": 256, "width": 256},
+    # SDXL VAE: 1024x1024 image reconstruction
+    {"batch_size": 1, "channels": 3, "height": 1024, "width": 1024},
+    # SD3 VAE: high-resolution reconstruction loss
+    {"batch_size": 2, "channels": 3, "height": 1024, "width": 1024},
+    # Flux VAE: ultra-high resolution support
+    {"batch_size": 1, "channels": 3, "height": 2048, "width": 2048},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "5_ReconstructionLoss")

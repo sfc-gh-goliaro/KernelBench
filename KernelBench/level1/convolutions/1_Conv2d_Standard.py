@@ -19,6 +19,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 256, "num_classes": 1000},
+    # ResNet-50: first conv (3x224x224 -> 64x112x112)
+    {"batch_size": 32, "num_classes": 1000},
+    # ResNet-101: first conv
+    {"batch_size": 16, "num_classes": 1000},
+    # ResNet-152: first conv
+    {"batch_size": 8, "num_classes": 1000},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "1_Conv2d_Standard")

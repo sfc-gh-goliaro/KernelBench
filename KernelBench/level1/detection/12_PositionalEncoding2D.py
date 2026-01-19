@@ -98,6 +98,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "channels": 256, "height": 80, "width": 80, "hidden_size": 256},
+    # DETR: feature map encoding
+    {"batch_size": 4, "channels": 256, "height": 25, "width": 34, "hidden_size": 256},
+    # Deformable DETR: multi-scale P3
+    {"batch_size": 4, "channels": 256, "height": 100, "width": 134, "hidden_size": 256},
+    # ViT-Det: higher resolution
+    {"batch_size": 2, "channels": 256, "height": 64, "width": 64, "hidden_size": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "12_PositionalEncoding2D")

@@ -27,7 +27,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: self-attention projection weights
     {"param_shape": (4096, 4096)},
+    # Llama-3.1 8B: MLP gate/up projection weights
+    {"param_shape": (14336, 4096)},
+    # Mistral 7B: output projection weights
+    {"param_shape": (4096, 14336)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "1_WeightAverage")

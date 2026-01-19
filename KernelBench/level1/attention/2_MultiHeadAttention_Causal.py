@@ -169,7 +169,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+    # Prefill-heavy: Llama-3.1-8B initial prompt processing (2048 tokens)
+    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 1096},
+    # Prefill-heavy: Llama-3.1-8B chunked prefill (512 token chunks)
+    {"batch_size": 8, "seq_len": 512, "context_len": 1024, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": 97, "num_blocks": 820},
+    # Decode-heavy: Llama-3.1-8B autoregressive generation (1 token, 2k context)
+    {"batch_size": 32, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 4200},
+    # Decode-heavy: Llama-3.1-8B long context decoding (1 token, 8k context)
+    {"batch_size": 16, "seq_len": 1, "context_len": 8192, "hidden_size": 4096, "num_heads": 32, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 8300},
+    # Decode-heavy: Llama-3.1-70B batched generation (1 token, 4k context)
+    {"batch_size": 8, "seq_len": 1, "context_len": 4096, "hidden_size": 8192, "num_heads": 64, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 2120},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "2_MultiHeadAttention_Causal")

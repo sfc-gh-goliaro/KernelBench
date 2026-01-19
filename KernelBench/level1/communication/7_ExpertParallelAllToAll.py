@@ -112,6 +112,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"num_tokens": 8192, "hidden_size": 4096, "num_experts": 64},
+    # Mixtral-8x7B: 8 experts with expert parallelism
+    {"num_tokens": 4096, "hidden_size": 4096, "num_experts": 8},
+    # DeepSeek-V2: 160 experts with expert parallelism
+    {"num_tokens": 8192, "hidden_size": 5120, "num_experts": 160},
+    # DeepSeek-V3: 256 experts with expert parallelism
+    {"num_tokens": 8192, "hidden_size": 7168, "num_experts": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("communication", "7_ExpertParallelAllToAll")

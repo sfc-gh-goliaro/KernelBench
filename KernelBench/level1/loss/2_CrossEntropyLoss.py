@@ -20,7 +20,13 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 32768, "num_classes": 4096, "input_shape": (num_classes,), "dim": 1},
+    {"batch_size": 32768, "num_classes": 4096, "input_shape": 4096, "dim": 1},
+    # Llama-3.1-8B: vocab_size=128256
+    {"batch_size": 8192, "num_classes": 128256, "input_shape": 128256, "dim": 1},
+    # Llama-3.1-70B: vocab_size=128256
+    {"batch_size": 4096, "num_classes": 128256, "input_shape": 128256, "dim": 1},
+    # T5-Base: vocab_size=32128
+    {"batch_size": 8192, "num_classes": 32128, "input_shape": 32128, "dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "2_CrossEntropyLoss")

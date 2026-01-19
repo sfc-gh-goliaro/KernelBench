@@ -71,6 +71,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096},
+    # Llama-3.1-8B: sequence parallel gradient sync
+    {"batch_size": 8, "seq_length": 4096, "hidden_size": 4096},
+    # Llama-3.1-70B: sequence parallel gradient sync
+    {"batch_size": 4, "seq_length": 4096, "hidden_size": 8192},
+    # DeepSeek-V2: tensor parallel reduce-scatter
+    {"batch_size": 8, "seq_length": 2048, "hidden_size": 5120},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("communication", "3_ReduceScatter")

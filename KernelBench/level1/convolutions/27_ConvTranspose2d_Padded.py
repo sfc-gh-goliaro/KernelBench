@@ -37,6 +37,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 32, "out_channels": 32, "kernel_size": (3, 7), "height": 512, "width": 1024, "stride": (1, 1), "padding": (1, 3)},
+    # SDXL: VAE decoder with same-size padded transpose
+    {"batch_size": 1, "in_channels": 512, "out_channels": 512, "kernel_size": (3, 3), "height": 64, "width": 64, "stride": (1, 1), "padding": (1, 1)},
+    # ResNet-Decoder: skip connection compatible upsampling
+    {"batch_size": 8, "in_channels": 256, "out_channels": 128, "kernel_size": (3, 3), "height": 128, "width": 128, "stride": (1, 1), "padding": (1, 1)},
+    # InceptionV3: asymmetric padded transpose conv
+    {"batch_size": 16, "in_channels": 192, "out_channels": 192, "kernel_size": (1, 7), "height": 35, "width": 35, "stride": (1, 1), "padding": (0, 3)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "27_ConvTranspose2d_Padded")

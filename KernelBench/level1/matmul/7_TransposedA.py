@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"M": 1024 * 2, "K": 4096 * 2, "N": 2048 * 2},
+    # Llama-3.1-8B: attention output projection (hidden=4096, heads*head_dim=4096)
+    {"M": 4096, "K": 4096, "N": 4096},
+    # Llama-3.1-70B: FFN down projection (hidden=8192, intermediate=28672)
+    {"M": 8192, "K": 28672, "N": 8192},
+    # Mistral-7B: FFN gate projection (hidden=4096, intermediate=14336)
+    {"M": 14336, "K": 4096, "N": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "7_TransposedA")

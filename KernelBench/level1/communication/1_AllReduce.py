@@ -62,6 +62,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096},
+    # Llama-3.1-8B: tensor parallel post-GEMM reduction
+    {"batch_size": 8, "seq_length": 4096, "hidden_size": 4096},
+    # Llama-3.1-70B: tensor parallel post-GEMM reduction
+    {"batch_size": 4, "seq_length": 4096, "hidden_size": 8192},
+    # DeepSeek-V2: tensor parallel gradient sync
+    {"batch_size": 8, "seq_length": 2048, "hidden_size": 5120},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("communication", "1_AllReduce")

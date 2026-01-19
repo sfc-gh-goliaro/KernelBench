@@ -195,7 +195,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 64, "vocab_size": 32000, "context_len": 512, "temperature": 0.7, "top_k": 50, "top_p": 0.9},
+    # High-throughput: Llama-2-7B batched generation (large batch, short context)
+    {"batch_size": 128, "vocab_size": 32000, "context_len": 512, "temperature": 0.7, "top_k": 50, "top_p": 0.9},
+    # High-throughput: Llama-3.1-8B high-volume inference
+    {"batch_size": 64, "vocab_size": 128256, "context_len": 1024, "temperature": 0.6, "top_k": 40, "top_p": 0.95},
+    # Low-latency: Llama-3.1-8B long context with repetition penalty
+    {"batch_size": 8, "vocab_size": 128256, "context_len": 8192, "temperature": 0.7, "top_k": 50, "top_p": 0.9},
+    # Low-latency: Llama-3.1-70B long context generation
+    {"batch_size": 4, "vocab_size": 128256, "context_len": 16384, "temperature": 0.8, "top_k": 0, "top_p": 0.92},
+    # Balanced: Mistral-7B standard decoding
+    {"batch_size": 32, "vocab_size": 32768, "context_len": 2048, "temperature": 0.75, "top_k": 64, "top_p": 0.9},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "1_UnifiedSampler")

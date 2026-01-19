@@ -131,6 +131,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "text_len": 100, "audio_len": 500, "hidden_size": 512, "vocab_size": 1024},
+    # CosyVoice: Scalable multilingual speech synthesis
+    {"batch_size": 4, "text_len": 150, "audio_len": 750, "hidden_size": 768, "vocab_size": 2048},
+    # VALL-E 2: Neural codec language model with repetition aware sampling
+    {"batch_size": 2, "text_len": 200, "audio_len": 1000, "hidden_size": 1024, "vocab_size": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "5_DualARDecoder")

@@ -172,6 +172,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4, "num_queries": 100, "num_classes": 91, "num_targets": 10},
+    # DETR: COCO with 91 classes
+    {"batch_size": 4, "num_queries": 100, "num_classes": 91, "num_targets": 20},
+    # Deformable DETR: 300 queries
+    {"batch_size": 4, "num_queries": 300, "num_classes": 91, "num_targets": 15},
+    # DINO: 900 queries
+    {"batch_size": 2, "num_queries": 900, "num_classes": 91, "num_targets": 30},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "11_HungarianMatcher")

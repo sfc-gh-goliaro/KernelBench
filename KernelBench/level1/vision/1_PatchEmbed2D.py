@@ -68,6 +68,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "img_size": 224, "patch_size": 16, "in_channels": 3, "embed_dim": 768},
+    # Swin-v2-Tiny: hidden_size=96, patch_size=4, image_size=256
+    {"batch_size": 32, "img_size": 256, "patch_size": 4, "in_channels": 3, "embed_dim": 96},
+    # Swin-v2-Base: hidden_size=128, patch_size=4, image_size=384
+    {"batch_size": 16, "img_size": 384, "patch_size": 4, "in_channels": 3, "embed_dim": 128},
+    # Swin-v2-Large: hidden_size=192, patch_size=4, image_size=384
+    {"batch_size": 8, "img_size": 384, "patch_size": 4, "in_channels": 3, "embed_dim": 192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "1_PatchEmbed2D")

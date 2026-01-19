@@ -75,6 +75,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "num_experts": 8, "top_k": 2},
+    # DeepSeek-V2-Lite: num_experts=64, top_k=6
+    {"batch_size": 8, "seq_length": 2048, "num_experts": 64, "top_k": 6},
+    # Mixtral-8x7B: num_experts=8, top_k=2, longer sequence
+    {"batch_size": 8, "seq_length": 4096, "num_experts": 8, "top_k": 2},
+    # DeepSeek-V3: num_experts=256, top_k=8
+    {"batch_size": 4, "seq_length": 2048, "num_experts": 256, "top_k": 8},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("moe", "5_Aux_Loss_LoadBalance")

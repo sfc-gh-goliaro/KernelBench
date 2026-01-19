@@ -74,6 +74,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"param_size": (4096, 4096)},
+    # ResNet-50 training: final fully-connected layer
+    {"param_size": (2048, 1000)},
+    # VGG-16 finetuning: classifier layer
+    {"param_size": (4096, 4096)},
+    # EfficientNet-B7 training: dense layer
+    {"param_size": (2560, 1000)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "3_SGD")

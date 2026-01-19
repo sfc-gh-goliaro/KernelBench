@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 64, "out_channels": 64, "kernel_size": (3, 7), "width": 512, "height": 512},
+    # SDXL: VAE decoder asymmetric transpose conv
+    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": (3, 5), "width": 128, "height": 128},
+    # InceptionV3: asymmetric factorized transpose for upsampling
+    {"batch_size": 16, "in_channels": 192, "out_channels": 192, "kernel_size": (1, 7), "width": 35, "height": 35},
+    # PSPNet: pyramid pooling module upsampling
+    {"batch_size": 4, "in_channels": 256, "out_channels": 128, "kernel_size": (3, 5), "width": 256, "height": 256},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "17_ConvTranspose2d_AsymKernel")

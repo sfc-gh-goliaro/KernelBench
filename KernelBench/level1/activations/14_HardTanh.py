@@ -28,6 +28,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: clipped activation
+    {"batch_size": 32, "dim": 2048},
+    # ResNet-101: clipped activation
+    {"batch_size": 16, "dim": 2048},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "14_HardTanh")

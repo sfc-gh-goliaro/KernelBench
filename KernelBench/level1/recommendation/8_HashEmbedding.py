@@ -32,6 +32,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_features": 26, "num_buckets": 100000, "embed_dim": 16},
+    # DLRM: hash embedding for large-scale categorical features
+    {"batch_size": 2048, "num_features": 26, "num_buckets": 1000000, "embed_dim": 64},
+    # TikTok Monolith: real-time hash embedding lookups
+    {"batch_size": 8192, "num_features": 50, "num_buckets": 500000, "embed_dim": 32},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "8_HashEmbedding")

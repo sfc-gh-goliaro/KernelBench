@@ -84,6 +84,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "num_samples": 16000 * 30, "n_fft": 400, "hop_length": 160, "win_length": 400, "window": 'hann'},
+    # Whisper: 30s audio at 16kHz, 400 FFT
+    {"batch_size": 8, "num_samples": 16000 * 30, "n_fft": 400, "hop_length": 160, "win_length": 400, "window": 'hann'},
+    # Qwen2-Audio: 10s audio
+    {"batch_size": 16, "num_samples": 16000 * 10, "n_fft": 512, "hop_length": 256, "win_length": 512, "window": 'hann'},
+    # SeamlessM4T: shorter segments
+    {"batch_size": 32, "num_samples": 16000 * 5, "n_fft": 400, "hop_length": 160, "win_length": 400, "window": 'hann'},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "4_STFT")

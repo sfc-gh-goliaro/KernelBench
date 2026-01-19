@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 32, "out_channels": 32, "kernel_size": (3, 5, 7), "depth": 12, "height": 24, "width": 48, "stride": (2, 2, 2), "padding": (1, 2, 3), "output_padding": (1, 1, 1), "groups": 4},
+    # X3D: efficient video model with grouped 3D transpose conv
+    {"batch_size": 4, "in_channels": 96, "out_channels": 96, "kernel_size": (3, 3, 3), "depth": 8, "height": 28, "width": 28, "stride": (1, 2, 2), "padding": (1, 1, 1), "output_padding": (0, 1, 1), "groups": 24},
+    # TimeSformer-3D: video transformer decoder with grouped upsampling
+    {"batch_size": 2, "in_channels": 384, "out_channels": 384, "kernel_size": (2, 4, 4), "depth": 8, "height": 14, "width": 14, "stride": (2, 2, 2), "padding": (0, 1, 1), "output_padding": (0, 0, 0), "groups": 12},
+    # VideoGPT: grouped 3D transpose for video generation
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size": (4, 4, 4), "depth": 4, "height": 16, "width": 16, "stride": (2, 2, 2), "padding": (1, 1, 1), "output_padding": (0, 0, 0), "groups": 8},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "22_ConvTranspose3d_StridedGrouped")

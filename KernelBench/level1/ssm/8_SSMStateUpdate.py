@@ -85,6 +85,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "intermediate_size": 5120, "state_size": 16},
+    # Mamba-2-1.3B: d_model=2048, expand=2, d_state=128
+    {"batch_size": 32, "intermediate_size": 4096, "state_size": 128},
+    # Mamba-2-2.7B: d_model=2560, expand=2, d_state=128
+    {"batch_size": 32, "intermediate_size": 5120, "state_size": 128},
+    # RWKV-6-7B: d_model=4096, head_size=64, n_head=64
+    {"batch_size": 16, "intermediate_size": 4096, "state_size": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "8_SSMStateUpdate")

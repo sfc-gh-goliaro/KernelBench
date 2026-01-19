@@ -40,6 +40,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_depth": 3, "kernel_width": 5, "kernel_height": 5, "depth": 64, "width": 64, "height": 64},
+    # I3D: video action recognition decoder with temporal asymmetry
+    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_depth": 1, "kernel_width": 3, "kernel_height": 3, "depth": 8, "height": 28, "width": 28},
+    # SlowFast: asymmetric temporal upsampling
+    {"batch_size": 8, "in_channels": 256, "out_channels": 128, "kernel_depth": 5, "kernel_width": 3, "kernel_height": 3, "depth": 16, "height": 56, "width": 56},
+    # MedicalNet: 3D CT/MRI segmentation decoder
+    {"batch_size": 2, "in_channels": 128, "out_channels": 64, "kernel_depth": 3, "kernel_width": 5, "kernel_height": 5, "depth": 32, "height": 128, "width": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "18_ConvTranspose3d_AsymKernel")

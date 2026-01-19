@@ -22,6 +22,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32768, "input_shape": (8192,), "dim": 1},
+    # FaceNet: face embedding learning (512 dim)
+    {"batch_size": 256, "input_shape": (512,), "dim": 1},
+    # CLIP: image-text embedding (768 dim ViT-B)
+    {"batch_size": 512, "input_shape": (768,), "dim": 1},
+    # Sentence-BERT: sentence embedding (384 dim all-MiniLM)
+    {"batch_size": 1024, "input_shape": (384,), "dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "5_TripletMarginLoss")

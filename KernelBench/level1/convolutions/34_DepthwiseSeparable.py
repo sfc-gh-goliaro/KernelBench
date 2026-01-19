@@ -41,6 +41,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 64, "out_channels": 128, "kernel_size": 3, "width": 512, "height": 512, "stride": 1, "padding": 1, "dilation": 1},
+    # MobileNetV2: depthwise separable
+    {"batch_size": 32, "in_channels": 32, "out_channels": 64, "kernel_size": 3, "width": 112, "height": 112, "stride": 1, "padding": 1, "dilation": 1},
+    # EfficientNet-B0: depthwise separable
+    {"batch_size": 32, "in_channels": 96, "out_channels": 144, "kernel_size": 5, "width": 56, "height": 56, "stride": 1, "padding": 2, "dilation": 1},
+    # MobileNetV3: depthwise separable with stride
+    {"batch_size": 32, "in_channels": 72, "out_channels": 120, "kernel_size": 5, "width": 28, "height": 28, "stride": 2, "padding": 2, "dilation": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "34_DepthwiseSeparable")

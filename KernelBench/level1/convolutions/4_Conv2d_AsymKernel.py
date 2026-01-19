@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 64, "out_channels": 128, "kernel_size": (5, 7), "height": 512, "width": 256},
+    # InceptionNet style asymmetric convolutions
+    {"batch_size": 16, "in_channels": 192, "out_channels": 192, "kernel_size": (1, 7), "height": 28, "width": 28},
+    # InceptionNet 1xN + Nx1 factorization
+    {"batch_size": 16, "in_channels": 192, "out_channels": 192, "kernel_size": (7, 1), "height": 28, "width": 28},
+    # Efficient asymmetric convolution
+    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "kernel_size": (1, 3), "height": 14, "width": 14},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "4_Conv2d_AsymKernel")

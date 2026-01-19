@@ -101,6 +101,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "num_heads": 32, "seq_length": 2048, "head_dim": 128},
+    # Llama-3.1-8B: INT8 KV cache for long context serving
+    {"batch_size": 4, "num_heads": 8, "seq_length": 32768, "head_dim": 128},
+    # Mistral-7B: Grouped-query attention KV cache quantization
+    {"batch_size": 16, "num_heads": 8, "seq_length": 4096, "head_dim": 128},
+    # DeepSeek-V2: MLA compressed KV cache
+    {"batch_size": 2, "num_heads": 16, "seq_length": 16384, "head_dim": 192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "3_KVCache_Quantize")

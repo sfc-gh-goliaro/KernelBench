@@ -78,7 +78,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: model soup from 5 fine-tuned checkpoints
     {"param_shape": (4096, 4096), "num_models": 5},
+    # Mistral 7B: greedy soup from 8 domain-adapted models
+    {"param_shape": (14336, 4096), "num_models": 8},
+    # Qwen2 7B: uniform soup from 3 instruction-tuned variants
+    {"param_shape": (18944, 3584), "num_models": 3},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "8_ModelSoups")

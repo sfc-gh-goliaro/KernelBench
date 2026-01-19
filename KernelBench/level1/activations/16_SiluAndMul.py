@@ -50,6 +50,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "intermediate_size": 14336},
+    # Llama-3.1-8B: intermediate_size=14336
+    {"batch_size": 8, "seq_length": 4096, "intermediate_size": 14336},
+    # Llama-3.1-70B: intermediate_size=28672
+    {"batch_size": 4, "seq_length": 4096, "intermediate_size": 28672},
+    # Mistral-7B-v0.3: intermediate_size=14336
+    {"batch_size": 8, "seq_length": 4096, "intermediate_size": 14336},
+    # DeepSeek-V2-Lite: intermediate_size=10944
+    {"batch_size": 8, "seq_length": 4096, "intermediate_size": 10944},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "16_SiluAndMul")

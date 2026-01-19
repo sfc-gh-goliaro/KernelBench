@@ -37,6 +37,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "in_channels": 8, "kernel_size": 3, "width": 512, "height": 512, "stride": 1, "padding": 0, "dilation": 1},
+    # MobileNet: asymmetric depthwise
+    {"batch_size": 32, "in_channels": 96, "kernel_size": 5, "width": 56, "height": 56, "stride": 1, "padding": 2, "dilation": 1},
+    # EfficientNet: asymmetric depthwise
+    {"batch_size": 16, "in_channels": 144, "kernel_size": 5, "width": 28, "height": 28, "stride": 1, "padding": 2, "dilation": 1},
+    # Depthwise with dilation
+    {"batch_size": 32, "in_channels": 64, "kernel_size": 3, "width": 112, "height": 112, "stride": 1, "padding": 2, "dilation": 2},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "31_DepthwiseConv2d_AsymKernel")

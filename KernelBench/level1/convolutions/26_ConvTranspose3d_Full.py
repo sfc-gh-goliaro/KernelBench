@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_size": 3, "depth": 16, "height": 32, "width": 32, "stride": 2, "padding": 1, "dilation": 2},
+    # 3D-UNet: volumetric segmentation with dilated decoder
+    {"batch_size": 2, "in_channels": 256, "out_channels": 128, "kernel_size": 3, "depth": 8, "height": 16, "width": 16, "stride": 2, "padding": 1, "dilation": 1},
+    # Video-VAE: latent video decoder with full options
+    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_size": 4, "depth": 4, "height": 8, "width": 8, "stride": 2, "padding": 1, "dilation": 1},
+    # MedicalNet-3D: CT/MRI reconstruction decoder
+    {"batch_size": 1, "in_channels": 128, "out_channels": 64, "kernel_size": 3, "depth": 32, "height": 64, "width": 64, "stride": 1, "padding": 2, "dilation": 2},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "26_ConvTranspose3d_Full")

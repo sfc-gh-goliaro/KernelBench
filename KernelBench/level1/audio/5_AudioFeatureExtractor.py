@@ -80,6 +80,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "n_mels": 80, "time_frames": 3000, "hidden_size": 1024},
+    # Whisper-large: 80 mel, 3000 frames, 1280 hidden
+    {"batch_size": 8, "n_mels": 80, "time_frames": 3000, "hidden_size": 1280},
+    # Qwen2-Audio: audio encoder
+    {"batch_size": 16, "n_mels": 80, "time_frames": 1500, "hidden_size": 1024},
+    # SeamlessM4T: audio encoder
+    {"batch_size": 32, "n_mels": 80, "time_frames": 750, "hidden_size": 768},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "5_AudioFeatureExtractor")

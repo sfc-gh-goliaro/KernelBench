@@ -60,6 +60,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 96, "height": 56, "width": 56},
+    # EfficientNet-B0: stochastic depth in MBConv (32 channels, 112x112)
+    {"batch_size": 32, "channels": 32, "height": 112, "width": 112},
+    # EfficientNet-B4: stochastic depth in MBConv (144 channels, 47x47)
+    {"batch_size": 16, "channels": 144, "height": 47, "width": 47},
+    # ConvNeXt-Base: stochastic depth (128 channels, 56x56)
+    {"batch_size": 32, "channels": 128, "height": 56, "width": 56},
+    # ViT-Base: stochastic depth (768 tokens)
+    {"batch_size": 8, "channels": 768, "height": 1, "width": 197},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("mobile", "4_StochasticDepth")

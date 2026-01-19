@@ -82,6 +82,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096},
+    # Llama-3.1-70B: Dynamic INT8 activation quantization
+    {"batch_size": 2, "seq_length": 4096, "hidden_size": 8192},
+    # Mistral-Nemo-12B: Runtime quantization for memory efficiency
+    {"batch_size": 8, "seq_length": 8192, "hidden_size": 5120},
+    # Phi-3-medium: Dynamic quantization for edge deployment
+    {"batch_size": 16, "seq_length": 1024, "hidden_size": 5120},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "4_Dynamic_Quantize")

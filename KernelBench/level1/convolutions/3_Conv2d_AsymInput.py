@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "height": 512, "width": 1024, "in_channels": 64, "out_channels": 128, "kernel_size": 3},
+    # Panoramic image processing
+    {"batch_size": 4, "height": 256, "width": 1024, "in_channels": 64, "out_channels": 128, "kernel_size": 3},
+    # Wide-format video processing
+    {"batch_size": 8, "height": 360, "width": 640, "in_channels": 32, "out_channels": 64, "kernel_size": 3},
+    # Ultra-wide aspect ratio
+    {"batch_size": 4, "height": 128, "width": 512, "in_channels": 128, "out_channels": 256, "kernel_size": 3},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "3_Conv2d_AsymInput")

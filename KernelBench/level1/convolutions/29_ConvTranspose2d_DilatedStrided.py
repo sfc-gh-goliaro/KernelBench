@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_size": 3, "height_in": 64, "width_in": 128, "stride": 5, "padding": 1, "dilation": 2},
+    # SDXL-VAE: dilated strided upsampling decoder
+    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": 3, "height_in": 32, "width_in": 32, "stride": 2, "padding": 1, "dilation": 1},
+    # DeepLabV3: atrous spatial pyramid pooling upsampling
+    {"batch_size": 4, "in_channels": 256, "out_channels": 256, "kernel_size": 3, "height_in": 65, "width_in": 65, "stride": 1, "padding": 6, "dilation": 6},
+    # SegNet: encoder-decoder semantic segmentation
+    {"batch_size": 8, "in_channels": 512, "out_channels": 256, "kernel_size": 3, "height_in": 28, "width_in": 28, "stride": 2, "padding": 1, "dilation": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "29_ConvTranspose2d_DilatedStrided")

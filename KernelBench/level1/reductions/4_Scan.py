@@ -71,6 +71,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32768, "input_shape": (32768,), "dim": 1},
+    # Mamba-2.8B: selective state space cumulative sum
+    {"batch_size": 2048, "input_shape": (4096,), "dim": 1},
+    # RWKV-7B: linear attention cumulative product
+    {"batch_size": 1024, "input_shape": (8192,), "dim": 1},
+    # S4-Large: structured state space scan
+    {"batch_size": 4096, "input_shape": (2048,), "dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("reductions", "4_Scan")

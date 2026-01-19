@@ -71,6 +71,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 256, "num_items": 10000, "embedding_dim": 128},
+    # Two-Tower: YouTube DNN retrieval scoring
+    {"batch_size": 512, "num_items": 50000, "embedding_dim": 256},
+    # NCF: neural collaborative filtering dot product
+    {"batch_size": 1024, "num_items": 5000, "embedding_dim": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "9_DotProduct")

@@ -67,6 +67,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 256, "num_candidates": 10000, "embedding_dim": 768},
+    # CLIP: vision-language similarity matching
+    {"batch_size": 512, "num_candidates": 50000, "embedding_dim": 512},
+    # Sentence-BERT: semantic text similarity
+    {"batch_size": 128, "num_candidates": 100000, "embedding_dim": 384},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "10_CosineSimilarity")

@@ -170,7 +170,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_len": 1, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": (context_len + block_size - 1) // block_size, "num_blocks": batch_size * max_blocks_per_seq + 64},
+    # Prefill-heavy: DeepSeek-V2 initial prompt processing (2048 tokens)
+    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
+    # Prefill-heavy: DeepSeek-V2 chunked prefill (1024 token chunks)
+    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
+    # Decode-heavy: DeepSeek-V2 high-throughput decoding (1 token, 4k context)
+    {"batch_size": 64, "seq_len": 1, "context_len": 4096, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 16500},
+    # Decode-heavy: DeepSeek-V2-Lite batched generation (1 token, 8k context)
+    {"batch_size": 32, "seq_len": 1, "context_len": 8192, "hidden_size": 2048, "num_heads": 16, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 16500},
+    # Decode-heavy: DeepSeek-V3 long context decoding (1 token, 16k context)
+    {"batch_size": 8, "seq_len": 1, "context_len": 16384, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 1025, "num_blocks": 8300},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "5_MultiHeadLatentAttention")

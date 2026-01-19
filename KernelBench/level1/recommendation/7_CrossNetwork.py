@@ -36,6 +36,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "input_dim": 416},
+    # DCN: cross network for Criteo dataset
+    {"batch_size": 2048, "input_dim": 512},
+    # DCN-v2: mixture-of-experts cross layer
+    {"batch_size": 1024, "input_dim": 1024},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "7_CrossNetwork")

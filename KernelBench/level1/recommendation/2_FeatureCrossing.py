@@ -39,6 +39,10 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "num_features": 26, "embed_dim": 16},
+    # DCN-v2: feature crossing with larger embeddings
+    {"batch_size": 2048, "num_features": 39, "embed_dim": 64},
+    # xDeepFM: compressed interaction network features
+    {"batch_size": 1024, "num_features": 16, "embed_dim": 128},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("recommendation", "2_FeatureCrossing")

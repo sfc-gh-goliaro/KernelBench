@@ -33,7 +33,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: attention layer DARE sparsification
     {"param_shape": (4096, 4096)},
+    # Llama-3.1 70B: large MLP DARE dropout
+    {"param_shape": (8192, 28672)},
+    # Qwen2 7B: intermediate layer DARE merging
+    {"param_shape": (18944, 3584)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "4_DARE")

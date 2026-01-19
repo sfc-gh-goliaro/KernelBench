@@ -69,6 +69,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 96, "height": 56, "width": 56},
+    # EfficientNet-B0: SE in MBConv (32 channels, 112x112)
+    {"batch_size": 32, "channels": 32, "height": 112, "width": 112},
+    # EfficientNet-B4: SE in MBConv (144 channels, 47x47)
+    {"batch_size": 16, "channels": 144, "height": 47, "width": 47},
+    # EfficientNet-B7: SE in MBConv (288 channels, 38x38)
+    {"batch_size": 8, "channels": 288, "height": 38, "width": 38},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("mobile", "2_SqueezeExcitation")

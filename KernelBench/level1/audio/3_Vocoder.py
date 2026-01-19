@@ -79,6 +79,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "n_mels": 80, "time_frames": 300},
+    # Qwen2.5-Omni vocoder: HiFi-GAN style
+    {"batch_size": 16, "n_mels": 80, "time_frames": 500},
+    # HiFi-GAN standard: longer audio
+    {"batch_size": 4, "n_mels": 80, "time_frames": 1000},
+    # TTS batch inference
+    {"batch_size": 32, "n_mels": 80, "time_frames": 200},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "3_Vocoder")

@@ -48,6 +48,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"M": 2048, "K": 4096, "N": 2048},
+    # Llama-3.1-8B: hidden_size=4096, intermediate_size=14336 (FFN up projection)
+    {"M": 4096, "K": 4096, "N": 14336},
+    # Llama-3.1-70B: hidden_size=8192, intermediate_size=28672 (FFN up projection)
+    {"M": 4096, "K": 8192, "N": 28672},
+    # Llama-3.1-8B attention QKV projection: seq_len * num_heads * head_dim
+    {"M": 4096, "K": 4096, "N": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "1_MatMul")

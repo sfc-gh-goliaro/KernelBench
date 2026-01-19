@@ -63,6 +63,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "in_channels": 512, "out_channels": 512, "height": 20, "width": 20},
+    # YOLOv8-n: SPPF
+    {"batch_size": 16, "in_channels": 256, "out_channels": 256, "height": 20, "width": 20},
+    # YOLOv8-m: SPPF
+    {"batch_size": 8, "in_channels": 384, "out_channels": 384, "height": 20, "width": 20},
+    # YOLOv8-x: SPPF
+    {"batch_size": 4, "in_channels": 640, "out_channels": 640, "height": 20, "width": 20},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "3_SPPF")

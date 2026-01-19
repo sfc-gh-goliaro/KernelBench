@@ -31,6 +31,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "num_classes": 512},
+    # DALL-E discrete VAE: 8192-token codebook
+    {"batch_size": 1, "num_classes": 8192},
+    # SD3 discrete tokenizer: large vocabulary sampling
+    {"batch_size": 2, "num_classes": 16384},
+    # Parti VQ-VAE: discrete latent sampling
+    {"batch_size": 4, "num_classes": 8192},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "4_GumbelSoftmax")

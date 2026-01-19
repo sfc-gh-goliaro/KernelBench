@@ -36,6 +36,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "channels": 64, "height": 2048, "width": 2048, "kernel_size": 11},
+    # ResNet-50: avg pool before classifier (2048 channels, 7x7)
+    {"batch_size": 32, "channels": 2048, "height": 7, "width": 7, "kernel_size": 7},
+    # ResNet-101: avg pool before classifier (2048 channels, 7x7)
+    {"batch_size": 16, "channels": 2048, "height": 7, "width": 7, "kernel_size": 7},
+    # EfficientNet-B7: avg pool (2560 channels, 19x19)
+    {"batch_size": 8, "channels": 2560, "height": 19, "width": 19, "kernel_size": 19},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "5_AvgPool2d")

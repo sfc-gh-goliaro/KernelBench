@@ -119,7 +119,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "d_model": 4096, "d_state": 64},
+    # Prefill-heavy: Mamba-2-2.7B initial prompt processing (4096 tokens)
+    {"batch_size": 4, "seq_length": 4096, "d_model": 2560, "d_state": 128},
+    # Prefill-heavy: Codestral-Mamba long context prefill (8192 tokens)
+    {"batch_size": 2, "seq_length": 8192, "d_model": 4096, "d_state": 64},
+    # Decode-heavy: Mamba-2-1.3B autoregressive generation (1 token)
+    {"batch_size": 64, "seq_length": 1, "d_model": 2048, "d_state": 128},
+    # Decode-heavy: Mamba-2-2.7B batched token generation (1 token)
+    {"batch_size": 128, "seq_length": 1, "d_model": 2560, "d_state": 128},
+    # Decode-heavy: Codestral-Mamba high-throughput decoding (1 token)
+    {"batch_size": 32, "seq_length": 1, "d_model": 4096, "d_state": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "2_Mamba2_SSD")

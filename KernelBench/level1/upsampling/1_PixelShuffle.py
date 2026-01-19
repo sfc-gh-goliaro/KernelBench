@@ -51,6 +51,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "channels": 64, "upscale_factor": 2, "height": 64, "width": 64},
+    # ESPCN: super-resolution 4x upscaling
+    {"batch_size": 8, "channels": 48, "upscale_factor": 4, "height": 128, "width": 128},
+    # Real-ESRGAN: high-quality image restoration
+    {"batch_size": 4, "channels": 64, "upscale_factor": 2, "height": 256, "width": 256},
+    # SDXL VAE decoder: latent to pixel space
+    {"batch_size": 2, "channels": 128, "upscale_factor": 2, "height": 64, "width": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("upsampling", "1_PixelShuffle")

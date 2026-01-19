@@ -36,6 +36,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "channels": 32, "depth": 128, "height": 128, "width": 256, "kernel_size": 3, "stride": 2, "padding": 1},
+    # C3D: final avgpool before fc (512 channels, 1x4x4)
+    {"batch_size": 8, "channels": 512, "depth": 1, "height": 4, "width": 4, "kernel_size": 1, "stride": 1, "padding": 0},
+    # I3D: spatial-temporal pooling (832 channels, 8x7x7)
+    {"batch_size": 4, "channels": 832, "depth": 8, "height": 7, "width": 7, "kernel_size": 2, "stride": 2, "padding": 0},
+    # 3D-ResNet-50: avgpool before classifier (2048 channels, 4x7x7)
+    {"batch_size": 8, "channels": 2048, "depth": 4, "height": 7, "width": 7, "kernel_size": 4, "stride": 1, "padding": 0},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "6_AvgPool3d")

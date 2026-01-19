@@ -31,6 +31,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 64, "latent_dim": 256},
+    # SDXL VAE: 4-channel latent space encoder
+    {"batch_size": 1, "latent_dim": 4},
+    # SD3 VAE: 16-channel latent space encoder
+    {"batch_size": 2, "latent_dim": 16},
+    # Flux VAE: high-resolution latent encoder
+    {"batch_size": 1, "latent_dim": 64},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "1_Reparameterize")

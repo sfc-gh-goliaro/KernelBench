@@ -32,7 +32,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: attention layer task arithmetic
     {"param_shape": (4096, 4096)},
+    # Mistral 7B: MLP gate projection multi-task merge
+    {"param_shape": (14336, 4096)},
+    # CodeLlama 7B: down projection task vector addition
+    {"param_shape": (4096, 14336)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "5_TaskArithmetic")

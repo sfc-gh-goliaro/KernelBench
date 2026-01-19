@@ -52,6 +52,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "channels": 3, "height": 256, "width": 256, "reduction": 'mean'},
+    # ESRGAN: super-resolution reconstruction (512x512 output)
+    {"batch_size": 8, "channels": 3, "height": 512, "width": 512, "reduction": 'mean'},
+    # Stable Diffusion VAE: latent space reconstruction (64x64 latent)
+    {"batch_size": 4, "channels": 4, "height": 64, "width": 64, "reduction": 'mean'},
+    # U-Net: medical image segmentation (224x224 single channel)
+    {"batch_size": 16, "channels": 1, "height": 224, "width": 224, "reduction": 'mean'},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "8_L1Loss")

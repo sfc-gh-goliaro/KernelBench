@@ -73,6 +73,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"tokens_per_rank": 2048, "hidden_size": 4096},
+    # Mixtral-8x7B: MoE expert parallelism
+    {"tokens_per_rank": 4096, "hidden_size": 4096},
+    # DeepSeek-V2: MoE expert parallelism
+    {"tokens_per_rank": 2048, "hidden_size": 5120},
+    # DeepSeek-V3: MoE expert parallelism
+    {"tokens_per_rank": 4096, "hidden_size": 7168},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("communication", "4_AllToAll")

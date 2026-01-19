@@ -27,6 +27,14 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # ResNet-50: self-normalizing layers
+    {"batch_size": 32, "dim": 2048},
+    # ResNet-101: self-normalizing layers
+    {"batch_size": 16, "dim": 2048},
+    # Self-normalizing network: MLP hidden layer (batch=64, dim=4096)
+    {"batch_size": 64, "dim": 4096},
+    # Transformer FFN alternative: intermediate layer (batch=32, dim=3072)
+    {"batch_size": 32, "dim": 3072},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "9_SELU")

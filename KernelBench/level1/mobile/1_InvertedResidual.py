@@ -88,6 +88,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32, "in_channels": 96, "out_channels": 96, "height": 56, "width": 56, "expand_ratio": 6},
+    # EfficientNet-B0: MBConv stage 2 (32 channels, 112x112)
+    {"batch_size": 32, "in_channels": 32, "out_channels": 16, "height": 112, "width": 112, "expand_ratio": 1},
+    # EfficientNet-B4: MBConv stage 3 (48 channels, 95x95)
+    {"batch_size": 16, "in_channels": 48, "out_channels": 24, "height": 95, "width": 95, "expand_ratio": 6},
+    # EfficientNet-B7: MBConv stage 4 (80 channels, 75x75)
+    {"batch_size": 8, "in_channels": 80, "out_channels": 48, "height": 75, "width": 75, "expand_ratio": 6},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("mobile", "1_InvertedResidual")

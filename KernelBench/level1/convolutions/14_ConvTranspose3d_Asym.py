@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 32, "out_channels": 16, "kernel_size": (3, 5, 7), "depth_in": 16, "height_in": 32, "width_in": 64},
+    # Video super-resolution
+    {"batch_size": 4, "in_channels": 64, "out_channels": 32, "kernel_size": (1, 3, 3), "depth_in": 8, "height_in": 64, "width_in": 64},
+    # Medical imaging: 3D upsampling
+    {"batch_size": 2, "in_channels": 128, "out_channels": 64, "kernel_size": (2, 4, 4), "depth_in": 16, "height_in": 32, "width_in": 32},
+    # 3D reconstruction
+    {"batch_size": 4, "in_channels": 256, "out_channels": 128, "kernel_size": (4, 4, 4), "depth_in": 8, "height_in": 16, "width_in": 16},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "14_ConvTranspose3d_Asym")

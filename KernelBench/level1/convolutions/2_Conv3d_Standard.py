@@ -39,6 +39,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 16, "in_channels": 3, "out_channels": 64, "kernel_size": 3, "depth": 64, "width": 64, "height": 64},
+    # 3D ResNet: video classification
+    {"batch_size": 8, "in_channels": 64, "out_channels": 64, "kernel_size": 3, "depth": 16, "width": 56, "height": 56},
+    # I3D: video understanding
+    {"batch_size": 8, "in_channels": 192, "out_channels": 256, "kernel_size": 3, "depth": 8, "width": 28, "height": 28},
+    # SlowFast: slow pathway
+    {"batch_size": 4, "in_channels": 256, "out_channels": 512, "kernel_size": 3, "depth": 8, "width": 14, "height": 14},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "2_Conv3d_Standard")

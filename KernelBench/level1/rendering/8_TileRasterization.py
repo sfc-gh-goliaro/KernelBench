@@ -151,6 +151,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"num_primitives": 10000, "image_height": 512, "image_width": 512, "tile_size": 16},
+    # 3DGS: Standard tile-based rendering
+    {"num_primitives": 50000, "image_height": 800, "image_width": 800, "tile_size": 16},
+    # 3DGS-HD: High-resolution rendering with more primitives
+    {"num_primitives": 200000, "image_height": 1080, "image_width": 1920, "tile_size": 16},
+    # 3DGS-Mobile: Smaller tiles for mobile GPU efficiency
+    {"num_primitives": 25000, "image_height": 720, "image_width": 1280, "tile_size": 8},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "8_TileRasterization")

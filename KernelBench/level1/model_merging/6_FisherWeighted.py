@@ -31,7 +31,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-3.1 8B: Fisher-weighted attention merging
     {"param_shape": (4096, 4096)},
+    # Mistral 7B: Fisher-weighted MLP merging
+    {"param_shape": (14336, 4096)},
+    # Phi-3 Medium: Fisher importance averaging
+    {"param_shape": (5120, 17920)},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "6_FisherWeighted")

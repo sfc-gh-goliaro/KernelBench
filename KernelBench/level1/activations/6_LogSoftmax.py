@@ -28,6 +28,16 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 4096, "dim": 393216},
+    # Llama-3.1-8B: log probabilities over vocab_size=128256
+    {"batch_size": 8, "dim": 128256},
+    # Llama-3.1-70B: log probabilities over vocab_size=128256
+    {"batch_size": 4, "dim": 128256},
+    # T5-Base: log probabilities over vocab_size=32128
+    {"batch_size": 16, "dim": 32128},
+    # GPT-2: log probabilities over vocab_size=50257
+    {"batch_size": 16, "dim": 50257},
+    # BERT-Base: log probabilities over vocab_size=30522
+    {"batch_size": 32, "dim": 30522},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "6_LogSoftmax")

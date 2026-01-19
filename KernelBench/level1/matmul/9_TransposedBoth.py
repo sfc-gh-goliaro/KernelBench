@@ -28,6 +28,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"M": 1024 * 2, "K": 4096 * 2, "N": 2048 * 2},
+    # Llama-3.1-8B: attention score computation (seq=4096, head_dim=128)
+    {"M": 4096, "K": 128, "N": 4096},
+    # Llama-3.1-70B: attention value projection (seq=4096, hidden=8192)
+    {"M": 4096, "K": 8192, "N": 8192},
+    # GPT-2 XL: FFN computation (seq=1024, hidden=1600, intermediate=6400)
+    {"M": 1024, "K": 1600, "N": 6400},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "9_TransposedBoth")

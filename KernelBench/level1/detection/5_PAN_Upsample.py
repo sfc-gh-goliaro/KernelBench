@@ -49,6 +49,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "channels": 256},
+    # YOLOv8-n: PAN upsample
+    {"batch_size": 16, "channels": 64},
+    # YOLOv8-m: PAN upsample
+    {"batch_size": 8, "channels": 192},
+    # YOLOv8-x: PAN upsample
+    {"batch_size": 4, "channels": 320},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "5_PAN_Upsample")

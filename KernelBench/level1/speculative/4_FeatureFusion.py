@@ -76,7 +76,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-2-7B EAGLE feature fusion
     {"batch_size": 8, "seq_len": 128, "hidden_size": 4096, "embed_size": 4096},
+    # Llama-3.1-8B with Lookahead decoding
+    {"batch_size": 4, "seq_len": 256, "hidden_size": 4096, "embed_size": 4096},
+    # DeepSeek-Coder-6.7B draft fusion
+    {"batch_size": 8, "seq_len": 64, "hidden_size": 4096, "embed_size": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "4_FeatureFusion")

@@ -21,6 +21,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 32768, "input_shape": (32768,), "dim": 1},
+    # ResNet-50: binary classification head (2048 features)
+    {"batch_size": 4096, "input_shape": (2048,), "dim": 1},
+    # BERT-base: binary text classification (768 dim CLS token)
+    {"batch_size": 2048, "input_shape": (768,), "dim": 1},
+    # EfficientNet-B0: binary classifier (1280 features)
+    {"batch_size": 8192, "input_shape": (1280,), "dim": 1},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "6_HingeLoss")

@@ -83,7 +83,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Standard prompt lookup decoding
     {"batch_size": 8, "context_len": 2048, "query_len": 4, "ngram_len": 5, "max_matches": 5},
+    # REST retrieval with longer context (Llama-3.1-8B)
+    {"batch_size": 4, "context_len": 8192, "query_len": 6, "ngram_len": 8, "max_matches": 10},
+    # Short context prompt lookup (Mistral-7B)
+    {"batch_size": 16, "context_len": 1024, "query_len": 3, "ngram_len": 4, "max_matches": 8},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "5_NGramPool")

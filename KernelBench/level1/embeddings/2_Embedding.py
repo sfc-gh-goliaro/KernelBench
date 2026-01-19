@@ -55,6 +55,12 @@ class Model(nn.Module):
 
 PARAMETERS = [
     {"batch_size": 8, "seq_length": 2048, "vocab_size": 32000, "hidden_size": 4096},
+    # Llama-3.1-8B: vocab_size=128256, hidden_size=4096
+    {"batch_size": 8, "seq_length": 4096, "vocab_size": 128256, "hidden_size": 4096},
+    # Llama-3.1-70B: vocab_size=128256, hidden_size=8192
+    {"batch_size": 4, "seq_length": 4096, "vocab_size": 128256, "hidden_size": 8192},
+    # Mistral-7B-v0.3: vocab_size=32768, hidden_size=4096
+    {"batch_size": 8, "seq_length": 4096, "vocab_size": 32768, "hidden_size": 4096},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "2_Embedding")

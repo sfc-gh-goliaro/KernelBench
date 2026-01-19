@@ -120,7 +120,12 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
+    # Llama-2-7B CALM early exit (4 exit points)
     {"batch_size": 8, "seq_len": 128, "hidden_size": 4096, "vocab_size": 32000, "num_layers": 4},
+    # Llama-3.1-8B LayerSkip (8 exit points)
+    {"batch_size": 4, "seq_len": 256, "hidden_size": 4096, "vocab_size": 128256, "num_layers": 8},
+    # Mistral-7B LITE early exit
+    {"batch_size": 16, "seq_len": 64, "hidden_size": 4096, "vocab_size": 32768, "num_layers": 6},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "7_EarlyExit")
