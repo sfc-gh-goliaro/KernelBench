@@ -35,8 +35,11 @@ def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.fl
     assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
     assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
     p = PARAMETERS[param_idx]
-    scale = DISTRIBUTIONS[dist_name](((), dtype=dtype, device=device)
-    return [torch.rand(batch_size, *input_shape)*scale, torch.rand(batch_size, *input_shape)]
+    batch_size = p["batch_size"]
+    input_shape = p["input_shape"]
+    predictions = DISTRIBUTIONS[dist_name]((batch_size, *input_shape), dtype=dtype, device=device)
+    targets = DISTRIBUTIONS[dist_name]((batch_size, *input_shape), dtype=dtype, device=device)
+    return [predictions, targets]
 
 def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     return []

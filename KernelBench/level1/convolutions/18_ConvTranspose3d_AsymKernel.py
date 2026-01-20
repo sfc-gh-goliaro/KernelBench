@@ -59,4 +59,4 @@ def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.fl
 
 def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], (kernel_depth, p["kernel_width"], kernel_height)]
+    return [p["in_channels"], p["out_channels"], (p["kernel_depth"], p["kernel_width"], p["kernel_height"])]

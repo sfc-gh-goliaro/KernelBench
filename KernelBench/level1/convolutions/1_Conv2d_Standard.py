@@ -18,13 +18,13 @@ class Model(nn.Module):
 # Test code
 
 PARAMETERS = [
-    {"batch_size": 256, "num_classes": 1000},
+    {"batch_size": 256, "in_channels": 3, "height": 224, "width": 224, "num_classes": 1000},
     # ResNet-50: first conv (3x224x224 -> 64x112x112)
-    {"batch_size": 32, "num_classes": 1000},
+    {"batch_size": 32, "in_channels": 3, "height": 224, "width": 224, "num_classes": 1000},
     # ResNet-101: first conv
-    {"batch_size": 16, "num_classes": 1000},
+    {"batch_size": 16, "in_channels": 3, "height": 224, "width": 224, "num_classes": 1000},
     # ResNet-152: first conv
-    {"batch_size": 8, "num_classes": 1000},
+    {"batch_size": 8, "in_channels": 3, "height": 224, "width": 224, "num_classes": 1000},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "1_Conv2d_Standard")
@@ -33,7 +33,7 @@ def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.fl
     assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
     assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
     p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["num_classes"])
+    shape = (p["batch_size"], p["in_channels"], p["height"], p["width"])
     x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
     return [x]
 
