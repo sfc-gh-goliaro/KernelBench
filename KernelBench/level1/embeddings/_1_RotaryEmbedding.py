@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
+from typing import Optional, Literal
 
 class Model(nn.Module):
     """
@@ -14,12 +15,18 @@ class Model(nn.Module):
     Applies rotary position embeddings to query and key tensors by rotating
     pairs of dimensions using precomputed cos/sin values based on position.
     
-    Shapes:
-        Input: (batch_size, seq_len, num_heads, head_dim) for q and k
-        Output: (batch_size, seq_len, num_heads, head_dim) for q and k (rotated)
+    Shapes (depends on layout parameter):
+        layout="bshd": (batch_size, seq_len, num_heads, head_dim) - default
+        layout="bhsd": (batch_size, num_heads, seq_len, head_dim) - Llama attention style
     """
     
-    def __init__(self, head_dim: int, max_seq_len: int = 8192, base: float = 10000.0):
+    def __init__(
+        self, 
+        head_dim: int, 
+        max_seq_len: int = 8192, 
+        base: float = 10000.0,
+        layout: Literal["bshd", "bhsd"] = "bshd"
+    ):
         """
         Initialize RoPE.
         
@@ -27,11 +34,15 @@ class Model(nn.Module):
             head_dim: Dimension of each attention head (must be even)
             max_seq_len: Maximum sequence length for precomputed embeddings
             base: Base for the frequency computation
+            layout: Input tensor layout. 
+                    "bshd" = (batch, seq, heads, head_dim) - default
+                    "bhsd" = (batch, heads, seq, head_dim) - Llama attention style
         """
         super(Model, self).__init__()
         self.head_dim = head_dim
         self.max_seq_len = max_seq_len
         self.base = base
+        self.layout = layout
         
         # Precompute inverse frequencies
         inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
@@ -44,19 +55,25 @@ class Model(nn.Module):
         self.register_buffer('cos_cached', emb.cos())
         self.register_buffer('sin_cached', emb.sin())
     
-    def forward(self, q: torch.Tensor, k: torch.Tensor, position_ids: torch.Tensor = None) -> tuple:
+    def forward(self, q: torch.Tensor, k: torch.Tensor, position_ids: Optional[torch.Tensor] = None) -> tuple:
         """
         Apply rotary embeddings to q and k.
         
         Args:
-            q: Query tensor of shape (batch_size, seq_len, num_heads, head_dim)
-            k: Key tensor of shape (batch_size, seq_len, num_heads, head_dim)
+            q: Query tensor. Shape depends on layout:
+               - "bshd": (batch_size, seq_len, num_heads, head_dim)
+               - "bhsd": (batch_size, num_heads, seq_len, head_dim)
+            k: Key tensor with same layout as q
             position_ids: Optional position indices of shape (batch_size, seq_len)
             
         Returns:
             Tuple of (rotated_q, rotated_k) with same shapes as inputs
         """
-        seq_len = q.shape[1]
+        # Get seq_len based on layout
+        if self.layout == "bhsd":
+            seq_len = q.shape[2]  # (batch, heads, seq, head_dim)
+        else:
+            seq_len = q.shape[1]  # (batch, seq, heads, head_dim)
         
         if position_ids is None:
             cos = self.cos_cached[:seq_len]
@@ -65,13 +82,23 @@ class Model(nn.Module):
             cos = self.cos_cached[position_ids]
             sin = self.sin_cached[position_ids]
         
-        # Reshape for broadcasting: (seq_len, head_dim) -> (1, seq_len, 1, head_dim)
-        if position_ids is None:
-            cos = cos.unsqueeze(0).unsqueeze(2)
-            sin = sin.unsqueeze(0).unsqueeze(2)
+        # Reshape for broadcasting based on layout
+        if self.layout == "bhsd":
+            # For (batch, heads, seq, head_dim): broadcast shape is (1, 1, seq, head_dim)
+            if position_ids is None:
+                cos = cos.unsqueeze(0).unsqueeze(0)  # (1, 1, seq, head_dim)
+                sin = sin.unsqueeze(0).unsqueeze(0)
+            else:
+                cos = cos.unsqueeze(1)  # (batch, 1, seq, head_dim)
+                sin = sin.unsqueeze(1)
         else:
-            cos = cos.unsqueeze(2)
-            sin = sin.unsqueeze(2)
+            # For (batch, seq, heads, head_dim): broadcast shape is (1, seq, 1, head_dim)
+            if position_ids is None:
+                cos = cos.unsqueeze(0).unsqueeze(2)  # (1, seq, 1, head_dim)
+                sin = sin.unsqueeze(0).unsqueeze(2)
+            else:
+                cos = cos.unsqueeze(2)  # (batch, seq, 1, head_dim)
+                sin = sin.unsqueeze(2)
         
         q_rotated = self._apply_rotary(q, cos, sin)
         k_rotated = self._apply_rotary(k, cos, sin)

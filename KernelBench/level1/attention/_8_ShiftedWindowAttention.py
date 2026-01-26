@@ -15,38 +15,33 @@ class Model(nn.Module):
     Shifted window attention with cyclic shift for cross-window
     connections. Uses paged feature cache where feature patches
     are stored in non-contiguous blocks accessed via a page table.
+    
+    NOTE: This operator takes pre-computed Q, K, V tensors (already in window format).
+    The QKV projection should be done separately using a Linear operator.
 
     Shapes:
-        query: (batch, height, width, channels) - current features
-        feature_cache_pool: (num_blocks, block_size, channels) - paged feature pool
-        block_table: (batch, num_patches) - maps patch indices to physical blocks
-        valid_patches: (batch,) - number of valid cached patches
-        Output: (batch, height, width, channels)
+        q: (num_windows * batch, window_size * window_size, num_heads, head_dim) - query
+        k: (num_windows * batch, window_size * window_size, num_heads, head_dim) - key
+        v: (num_windows * batch, window_size * window_size, num_heads, head_dim) - value
+        attn_mask: (num_windows, window_size^2, window_size^2) - attention mask for shifted windows
+        Output: (num_windows * batch, window_size * window_size, dim)
     """
 
-    def __init__(self, dim: int, window_size: int = 7, shift_size: int = 3,
-                 num_heads: int = 8, block_size: int = 49):
+    def __init__(self, dim: int, window_size: int = 7, num_heads: int = 8):
         """
-        Initialize shifted window attention with paged feature cache.
+        Initialize shifted window attention.
 
         Args:
-            dim: Input dimension
+            dim: Input dimension (num_heads * head_dim)
             window_size: Size of attention window
-            shift_size: Shift amount for cyclic shift
             num_heads: Number of attention heads
-            block_size: Number of features per cache block/page
         """
         super(Model, self).__init__()
         self.dim = dim
         self.window_size = window_size
-        self.shift_size = shift_size
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
-        self.block_size = block_size
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=True)
-        self.proj = nn.Linear(dim, dim, bias=True)
 
         # Relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -66,115 +61,21 @@ class Model(nn.Module):
         relative_position_index = relative_coords.sum(-1)
         self.register_buffer('relative_position_index', relative_position_index)
 
-    def _gather_features_from_paged_cache(self, feature_cache_pool: torch.Tensor,
-                                           block_table: torch.Tensor,
-                                           valid_patches: torch.Tensor,
-                                           target_shape: tuple) -> torch.Tensor:
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                attn_mask: torch.Tensor = None) -> torch.Tensor:
         """
-        Gather features from paged cache using block table.
+        Shifted window attention forward pass.
 
         Args:
-            feature_cache_pool: (num_blocks, block_size, channels)
-            block_table: (batch, num_patches)
-            valid_patches: (batch,)
-            target_shape: (batch, height, width, channels)
+            q: Query (num_windows * batch, num_heads, window_size^2, head_dim)
+            k: Key (num_windows * batch, num_heads, window_size^2, head_dim)
+            v: Value (num_windows * batch, num_heads, window_size^2, head_dim)
+            attn_mask: Optional attention mask for shifted windows (num_windows, window_size^2, window_size^2)
 
         Returns:
-            features: (batch, height, width, channels)
+            Output tensor (num_windows * batch, num_heads, window_size^2, head_dim)
         """
-        batch_size, num_patches = block_table.shape
-        _, H, W, C = target_shape
-        device = feature_cache_pool.device
-
-        # Gather blocks for each batch
-        gathered_blocks = feature_cache_pool[block_table.flatten()]
-        # (batch * num_patches, block_size, channels)
-
-        gathered_blocks = gathered_blocks.view(
-            batch_size, num_patches, self.block_size, C
-        )
-
-        # For simplicity, assume each patch corresponds to one window
-        # and block_size = window_size * window_size
-        features = gathered_blocks.view(batch_size, H, W, C)
-
-        return features
-
-    def _window_partition(self, x: torch.Tensor) -> torch.Tensor:
-        """Partition into windows."""
-        B, H, W, C = x.shape
-        x = x.view(B, H // self.window_size, self.window_size,
-                   W // self.window_size, self.window_size, C)
-        windows = x.permute(0, 1, 3, 2, 4, 5).contiguous()
-        windows = windows.view(-1, self.window_size * self.window_size, C)
-        return windows
-
-    def _window_reverse(self, windows: torch.Tensor, H: int, W: int, B: int) -> torch.Tensor:
-        """Reverse window partition."""
-        x = windows.view(B, H // self.window_size, W // self.window_size,
-                        self.window_size, self.window_size, -1)
-        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
-        x = x.view(B, H, W, -1)
-        return x
-
-    def _create_mask(self, H: int, W: int, device: torch.device) -> torch.Tensor:
-        """Create attention mask for shifted windows."""
-        img_mask = torch.zeros((1, H, W, 1), device=device)
-        h_slices = (slice(0, -self.window_size),
-                   slice(-self.window_size, -self.shift_size),
-                   slice(-self.shift_size, None))
-        w_slices = (slice(0, -self.window_size),
-                   slice(-self.window_size, -self.shift_size),
-                   slice(-self.shift_size, None))
-        cnt = 0
-        for h in h_slices:
-            for w in w_slices:
-                img_mask[:, h, w, :] = cnt
-                cnt += 1
-
-        mask_windows = self._window_partition(img_mask)
-        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0))
-        attn_mask = attn_mask.masked_fill(attn_mask == 0, float(0.0))
-        return attn_mask
-
-    def forward(self, query: torch.Tensor, feature_cache_pool: torch.Tensor,
-                block_table: torch.Tensor, valid_patches: torch.Tensor) -> torch.Tensor:
-        """
-        Shifted window attention forward pass with paged feature cache.
-
-        Args:
-            query: Query features (batch, height, width, channels)
-            feature_cache_pool: Paged feature cache (num_blocks, block_size, channels)
-            block_table: Block table (batch, num_patches)
-            valid_patches: Number of valid patches (batch,)
-
-        Returns:
-            Output tensor (batch, height, width, channels)
-        """
-        B, H, W, C = query.shape
-
-        # Optionally gather from paged cache and combine with query
-        # For this benchmark, we use query directly and demonstrate
-        # the paging mechanism for the attention computation
-
-        x = query
-
-        # Cyclic shift
-        shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
-
-        # Partition into windows
-        x_windows = self._window_partition(shifted_x)
-        B_windows = x_windows.shape[0]
-
-        # Create attention mask
-        attn_mask = self._create_mask(H, W, query.device)
-
-        # QKV projection
-        qkv = self.qkv(x_windows).reshape(B_windows, -1, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        B_windows, num_heads, seq_len, head_dim = q.shape
 
         # Attention
         attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -186,24 +87,18 @@ class Model(nn.Module):
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
         attn = attn + relative_position_bias.unsqueeze(0)
 
-        # Apply attention mask
-        num_windows = B_windows // B
-        attn = attn.view(B, num_windows, self.num_heads, -1, -1)
-        attn = attn + attn_mask.unsqueeze(1).unsqueeze(0)
-        attn = attn.view(B_windows, self.num_heads, -1, -1)
+        # Apply attention mask if provided
+        if attn_mask is not None:
+            num_windows = attn_mask.shape[0]
+            attn = attn.view(-1, num_windows, self.num_heads, seq_len, seq_len)
+            attn = attn + attn_mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(B_windows, self.num_heads, seq_len, seq_len)
 
         attn = F.softmax(attn, dim=-1)
 
-        x_windows = (attn @ v).transpose(1, 2).reshape(B_windows, -1, C)
-        x_windows = self.proj(x_windows)
+        output = attn @ v
 
-        # Reverse window partition
-        shifted_x = self._window_reverse(x_windows, H, W, B)
-
-        # Reverse cyclic shift
-        x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
-
-        return x
+        return output  # (num_windows * batch, heads, window_size^2, head_dim)
 
 
 # ============================================================================
@@ -212,16 +107,16 @@ class Model(nn.Module):
 
 
 PARAMETERS = [
-    # Prefill-heavy: Swin-v2-Tiny high-resolution processing (512x512)
-    {"batch_size": 4, "height": 512, "width": 512, "channels": 96, "window_size": 8, "shift_size": 4, "num_heads": 3, "block_size": 64, "num_patches": 4096, "num_blocks": 16500},
-    # Prefill-heavy: Swin-v2-Base large batch image classification (384x384)
-    {"batch_size": 16, "height": 384, "width": 384, "channels": 128, "window_size": 12, "shift_size": 6, "num_heads": 4, "block_size": 144, "num_patches": 1024, "num_blocks": 16500},
-    # Decode-heavy: Swin-v2-Tiny streaming inference small batch (224x224)
-    {"batch_size": 64, "height": 224, "width": 224, "channels": 96, "window_size": 7, "shift_size": 3, "num_heads": 4, "block_size": 49, "num_patches": 1024, "num_blocks": 65536},
-    # Decode-heavy: Swin-v2-Base real-time video frame processing (256x256)
-    {"batch_size": 32, "height": 256, "width": 256, "channels": 128, "window_size": 8, "shift_size": 4, "num_heads": 4, "block_size": 64, "num_patches": 1024, "num_blocks": 33000},
-    # Prefill-heavy: Swin-v2-Large high-quality image processing (384x384)
-    {"batch_size": 2, "height": 384, "width": 384, "channels": 192, "window_size": 12, "shift_size": 6, "num_heads": 6, "block_size": 144, "num_patches": 1024, "num_blocks": 2100},
+    # Swin-v2-Tiny high-resolution processing (512x512, 64x64 windows)
+    {"batch_size": 4, "num_windows": 4096, "window_size": 8, "num_heads": 3, "head_dim": 32},
+    # Swin-v2-Base large batch image classification (384x384)
+    {"batch_size": 16, "num_windows": 1024, "window_size": 12, "num_heads": 4, "head_dim": 32},
+    # Swin-v2-Tiny streaming inference (224x224)
+    {"batch_size": 64, "num_windows": 1024, "window_size": 7, "num_heads": 4, "head_dim": 24},
+    # Swin-v2-Base video frame processing (256x256)
+    {"batch_size": 32, "num_windows": 1024, "window_size": 8, "num_heads": 4, "head_dim": 32},
+    # Swin-v2-Large high-quality image processing (384x384)
+    {"batch_size": 2, "num_windows": 1024, "window_size": 12, "num_heads": 6, "head_dim": 32},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "8_ShiftedWindowAttention")
@@ -230,11 +125,17 @@ def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.fl
     assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
     assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
     p = PARAMETERS[param_idx]
-    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["height"], p["width"], p["channels"]), dtype=dtype, device=device)
-    feature_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["channels"]), dtype=dtype, device=device)
-    block_table = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_patches"]), dtype=dtype, device=device)
-    return [query, feature_cache_pool, block_table, valid_patches]
+    B_windows = p["batch_size"] * p["num_windows"]
+    seq_len = p["window_size"] * p["window_size"]
+    # Pre-projected Q, K, V tensors in window format
+    q = DISTRIBUTIONS[dist_name]((B_windows, p["num_heads"], seq_len, p["head_dim"]), dtype=dtype, device=device)
+    k = DISTRIBUTIONS[dist_name]((B_windows, p["num_heads"], seq_len, p["head_dim"]), dtype=dtype, device=device)
+    v = DISTRIBUTIONS[dist_name]((B_windows, p["num_heads"], seq_len, p["head_dim"]), dtype=dtype, device=device)
+    # Optional attention mask for shifted windows
+    attn_mask = torch.zeros((p["num_windows"], seq_len, seq_len), dtype=dtype, device=device)
+    return [q, k, v, attn_mask]
 
 def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     p = PARAMETERS[param_idx]
-    return [p["channels"], p["window_size"], p["shift_size"], p["num_heads"], p["block_size"]]
+    dim = p["num_heads"] * p["head_dim"]
+    return [dim, p["window_size"], p["num_heads"]]

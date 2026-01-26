@@ -16,50 +16,42 @@ class Model(nn.Module):
     MLA compresses KV into a low-rank latent space before caching,
     reducing KV cache memory while maintaining model quality.
     Uses paged cache where the compressed latent is stored in blocks.
+    
+    NOTE: This operator takes pre-projected Q and pre-compressed KV latent.
+    The latent-to-KV up-projections are done inside this operator as they
+    are integral to the MLA attention mechanism.
 
     Shapes:
-        query: (batch_size, seq_len, hidden_size) - current query tokens
+        q: (batch_size, num_heads, seq_len, head_dim) - projected query
+        kv_latent: (batch_size, seq_len, kv_lora_rank) - compressed KV latent (new tokens)
         latent_cache_pool: (num_blocks, block_size, kv_lora_rank) - paged latent cache
         block_table: (batch_size, max_blocks_per_seq) - maps logical to physical blocks
         context_lens: (batch_size,) - number of cached tokens per sequence
-        Output: (batch_size, seq_len, hidden_size)
+        Output: (batch_size, num_heads, seq_len, head_dim)
     """
 
-    def __init__(self, hidden_size: int, num_heads: int, kv_lora_rank: int = 512,
-                 q_lora_rank: int = None, block_size: int = 16, dropout: float = 0.0):
+    def __init__(self, num_heads: int, head_dim: int, kv_lora_rank: int = 512,
+                 block_size: int = 16, dropout: float = 0.0):
         """
         Initialize MLA with paged latent cache.
 
         Args:
-            hidden_size: Model hidden dimension
             num_heads: Number of attention heads
+            head_dim: Dimension of each attention head
             kv_lora_rank: Rank for KV compression (stored in cache)
-            q_lora_rank: Rank for Q compression (optional)
             block_size: Number of tokens per cache block/page
             dropout: Attention dropout probability
         """
         super(Model, self).__init__()
-        self.hidden_size = hidden_size
         self.num_heads = num_heads
-        self.head_dim = hidden_size // num_heads
+        self.head_dim = head_dim
         self.kv_lora_rank = kv_lora_rank
-        self.q_lora_rank = q_lora_rank
         self.block_size = block_size
         self.dropout = dropout
 
-        # Q projection (optionally compressed)
-        if q_lora_rank is not None:
-            self.q_down_proj = nn.Linear(hidden_size, q_lora_rank, bias=False)
-            self.q_up_proj = nn.Linear(q_lora_rank, num_heads * self.head_dim, bias=False)
-        else:
-            self.q_proj = nn.Linear(hidden_size, num_heads * self.head_dim, bias=False)
-
-        # KV compression: project to low-rank latent, then back up
-        self.kv_down_proj = nn.Linear(hidden_size, kv_lora_rank, bias=False)
-        self.k_up_proj = nn.Linear(kv_lora_rank, num_heads * self.head_dim, bias=False)
-        self.v_up_proj = nn.Linear(kv_lora_rank, num_heads * self.head_dim, bias=False)
-
-        self.o_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        # KV up-projections: latent -> K and V (integral to MLA mechanism)
+        self.k_up_proj = nn.Linear(kv_lora_rank, num_heads * head_dim, bias=False)
+        self.v_up_proj = nn.Linear(kv_lora_rank, num_heads * head_dim, bias=False)
 
         self.scale = 1.0 / math.sqrt(self.head_dim)
 
@@ -96,41 +88,32 @@ class Model(nn.Module):
 
         return latent_cache
 
-    def forward(self, query: torch.Tensor, latent_cache_pool: torch.Tensor,
-                block_table: torch.Tensor, context_lens: torch.Tensor) -> torch.Tensor:
+    def forward(self, q: torch.Tensor, kv_latent: torch.Tensor,
+                latent_cache_pool: torch.Tensor, block_table: torch.Tensor,
+                context_lens: torch.Tensor) -> torch.Tensor:
         """
         Forward pass with paged latent cache and MLA.
 
         Args:
-            query: Query tensor (batch_size, seq_len, hidden_size)
+            q: Projected query (batch_size, num_heads, seq_len, head_dim)
+            kv_latent: Compressed KV latent for new tokens (batch_size, seq_len, kv_lora_rank)
             latent_cache_pool: Paged latent cache (num_blocks, block_size, kv_lora_rank)
             block_table: Block table (batch_size, max_blocks_per_seq)
             context_lens: Context lengths (batch_size,)
 
         Returns:
-            Output tensor (batch_size, seq_len, hidden_size)
+            Output tensor (batch_size, num_heads, seq_len, head_dim)
         """
-        batch_size, seq_len, _ = query.shape
-        device = query.device
-
-        # Compute Q
-        if self.q_lora_rank is not None:
-            q = self.q_up_proj(self.q_down_proj(query))
-        else:
-            q = self.q_proj(query)
-
-        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        batch_size, num_heads, seq_len, head_dim = q.shape
+        device = q.device
 
         # Gather latent from paged cache
         latent_cache = self._gather_latent_from_paged_cache(
             latent_cache_pool, block_table, context_lens
         )
 
-        # Compress current tokens to latent
-        latent_new = self.kv_down_proj(query)
-
         # Concatenate cached and new latent
-        latent = torch.cat([latent_cache, latent_new], dim=1)
+        latent = torch.cat([latent_cache, kv_latent], dim=1)
 
         # Project latent back to K and V
         k = self.k_up_proj(latent)
@@ -157,11 +140,8 @@ class Model(nn.Module):
             attn_weights = F.dropout(attn_weights, p=self.dropout)
 
         attn_output = torch.matmul(attn_weights, v)
-        attn_output = attn_output.transpose(1, 2).contiguous().view(
-            batch_size, seq_len, self.hidden_size
-        )
 
-        return self.o_proj(attn_output)
+        return attn_output  # (batch, heads, seq_len, head_dim)
 
 
 # ============================================================================
@@ -171,15 +151,15 @@ class Model(nn.Module):
 
 PARAMETERS = [
     # Prefill-heavy: DeepSeek-V2 initial prompt processing (2048 tokens)
-    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
+    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "num_heads": 32, "head_dim": 128, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
     # Prefill-heavy: DeepSeek-V2 chunked prefill (1024 token chunks)
-    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
+    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "num_heads": 32, "head_dim": 128, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
     # Decode-heavy: DeepSeek-V2 high-throughput decoding (1 token, 4k context)
-    {"batch_size": 64, "seq_len": 1, "context_len": 4096, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 16500},
+    {"batch_size": 64, "seq_len": 1, "context_len": 4096, "num_heads": 32, "head_dim": 128, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 16500},
     # Decode-heavy: DeepSeek-V2-Lite batched generation (1 token, 8k context)
-    {"batch_size": 32, "seq_len": 1, "context_len": 8192, "hidden_size": 2048, "num_heads": 16, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 16500},
+    {"batch_size": 32, "seq_len": 1, "context_len": 8192, "num_heads": 16, "head_dim": 128, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 16500},
     # Decode-heavy: DeepSeek-V3 long context decoding (1 token, 16k context)
-    {"batch_size": 8, "seq_len": 1, "context_len": 16384, "hidden_size": 4096, "num_heads": 32, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 1025, "num_blocks": 8300},
+    {"batch_size": 8, "seq_len": 1, "context_len": 16384, "num_heads": 32, "head_dim": 128, "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 1025, "num_blocks": 8300},
 ]
 
 SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "5_MultiHeadLatentAttention")
@@ -188,11 +168,14 @@ def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.fl
     assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
     assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
     p = PARAMETERS[param_idx]
-    query = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["hidden_size"]), dtype=dtype, device=device)
+    # Pre-projected Q and pre-compressed KV latent
+    q = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
+    kv_latent = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["kv_lora_rank"]), dtype=dtype, device=device)
     latent_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["kv_lora_rank"]), dtype=dtype, device=device)
-    block_table = DISTRIBUTIONS[dist_name]((p["batch_size"], p["max_blocks_per_seq"]), dtype=dtype, device=device)
-    return [query, latent_cache_pool, block_table, context_lens]
+    block_table = torch.randint(0, p["num_blocks"], (p["batch_size"], p["max_blocks_per_seq"]), device=device)
+    context_lens = torch.full((p["batch_size"],), p["context_len"], dtype=torch.long, device=device)
+    return [q, kv_latent, latent_cache_pool, block_table, context_lens]
 
 def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
     p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["num_heads"], p["kv_lora_rank"]]
+    return [p["num_heads"], p["head_dim"], p["kv_lora_rank"]]
