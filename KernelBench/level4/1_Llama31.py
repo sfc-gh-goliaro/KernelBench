@@ -1,36 +1,43 @@
 """
 Llama-3.1 Dense Decoder Model
 
-A decoder-only transformer implementing Llama-3.1 architecture:
+A decoder-only transformer implementing Llama-3.1 architecture with paged KV cache:
 - RMSNorm normalization
-- Grouped-Query Attention (GQA) with Paged KV Cache
+- Grouped-Query Attention (GQA) with per-layer paged KV cache
 - Rotary Position Embeddings (RoPE)
 - SwiGLU MLP (gate/up projection fused)
+
+Implementation aligned with vLLM's paged attention design:
+- Each attention layer owns its own KV cache
+- Uses AttentionMetadata for slot_mapping, block_table, etc.
+- Supports both prefill and decode phases
 
 Variants from Table 5:
 - Llama-3.1-8B: hidden=4096, heads=32, kv_heads=8, layers=32
 - Llama-3.1-70B: hidden=8192, heads=64, kv_heads=8, layers=80
-
-This model uses level1 operators from KernelBench directly (no wrappers needed).
-All operators are used directly without any custom implementations.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
+from dataclasses import dataclass
 
-# Import level1 operators - all used directly without wrappers
+# Import level1 operators
 from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.attention._3_GroupedQueryAttention import Model as GroupedQueryAttention
+from ..level1.attention._3_GroupedQueryAttention import (
+    Model as GroupedQueryAttention,
+    AttentionMetadata,
+    create_attention_metadata,
+)
 
 
 # ============================================================================
-# Model Variants - configs loaded from HuggingFace
+# Model Variants
 # ============================================================================
 
 VARIANTS: Dict[str, str] = {
@@ -40,18 +47,19 @@ VARIANTS: Dict[str, str] = {
 
 
 # ============================================================================
-# Component Modules (using level1 operators directly)
+# Component Modules
 # ============================================================================
 
 class LlamaAttention(nn.Module):
     """
-    Llama-style attention block using level1 operators.
+    Llama-style attention block with per-layer paged KV cache.
     
     Uses:
     - Linear for Q/K/V/O projections
-    - RotaryEmbedding for position encoding
+    - RotaryEmbedding for position encoding (with optional Llama3 scaling)
     - GroupedQueryAttention for attention with paged KV cache
     """
+    
     def __init__(
         self,
         hidden_size: int,
@@ -60,72 +68,99 @@ class LlamaAttention(nn.Module):
         head_dim: int,
         max_seq_len: int = 8192,
         rope_theta: float = 10000.0,
+        rope_scaling: Optional[Dict[str, Any]] = None,
         block_size: int = 16,
+        num_blocks: int = 1024,
+        layer_idx: int = 0,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
+        self.layer_idx = layer_idx
 
-        # Q/K/V/O projections using level1 Linear
+        # Q/K/V/O projections
         self.q_proj = Linear(hidden_size, num_heads * head_dim, bias=False)
         self.k_proj = Linear(hidden_size, num_kv_heads * head_dim, bias=False)
         self.v_proj = Linear(hidden_size, num_kv_heads * head_dim, bias=False)
         self.o_proj = Linear(num_heads * head_dim, hidden_size, bias=False)
 
-        # RoPE using level1 RotaryEmbedding with bhsd layout
-        self.rotary_emb = RotaryEmbedding(head_dim, max_seq_len, rope_theta, layout="bhsd")
+        # RoPE with bhsd layout and optional Llama3 scaling
+        self.rotary_emb = RotaryEmbedding(
+            head_dim=head_dim,
+            max_seq_len=max_seq_len,
+            base=rope_theta,
+            layout="bhsd",
+            rope_scaling=rope_scaling,
+        )
         
-        # Attention using level1 GroupedQueryAttention with paged KV cache
-        self.attn = GroupedQueryAttention(num_heads, num_kv_heads, head_dim, block_size)
+        # GQA with its own KV cache (per-layer cache)
+        self.attn = GroupedQueryAttention(
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            block_size=block_size,
+            num_blocks=num_blocks,
+            max_seq_len=max_seq_len,
+        )
 
     def forward(
         self, 
         x: torch.Tensor, 
-        kv_cache_pool: torch.Tensor,
-        block_table: torch.Tensor,
-        context_lens: torch.Tensor,
+        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         """
         Forward pass with paged KV cache.
         
         Args:
             x: Input tensor (batch_size, seq_len, hidden_size)
-            kv_cache_pool: Paged KV cache (num_blocks, block_size, num_kv_heads, head_dim, 2)
-            block_table: Block table (batch_size, max_blocks_per_seq)
-            context_lens: Context lengths (batch_size,)
+            attn_metadata: Attention metadata (slot_mapping, block_table, etc.)
             
         Returns:
             Output tensor (batch_size, seq_len, hidden_size)
         """
         batch_size, seq_len, _ = x.shape
+        device = x.device
 
-        # Q/K/V projections using level1 Linear
+        # Q/K/V projections
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
-        # Apply RoPE using level1 RotaryEmbedding
-        q, k = self.rotary_emb(q, k)
+        # Compute position IDs accounting for context_lens
+        # For prefill: positions are 0, 1, 2, ... seq_len-1
+        # For decode: positions are context_lens, context_lens+1, ...
+        if attn_metadata.is_prefill:
+            position_ids = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
+        else:
+            # During decode, each sequence may have different context length
+            # position_ids shape: (batch_size, seq_len)
+            position_ids = attn_metadata.context_lens.unsqueeze(1) + torch.arange(seq_len, device=device).unsqueeze(0)
 
-        # Attention using level1 GroupedQueryAttention with paged KV cache
-        attn_output = self.attn(q, k, v, kv_cache_pool, block_table, context_lens)
+        # Apply RoPE with position-aware embeddings
+        q, k = self.rotary_emb(q, k, position_ids)
+
+        # Attention with paged KV cache
+        attn_output = self.attn(q, k, v, attn_metadata)
 
         # Reshape and apply output projection
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.o_proj(attn_output)
 
+    def reset_cache(self):
+        """Reset this layer's KV cache."""
+        self.attn.reset_cache()
+
 
 class SwiGLUMLP(nn.Module):
     """SwiGLU MLP using level1 operators."""
+    
     def __init__(self, hidden_size: int, intermediate_size: int):
         super().__init__()
         self.gate_proj = Linear(hidden_size, intermediate_size, bias=False)
         self.up_proj = Linear(hidden_size, intermediate_size, bias=False)
         self.down_proj = Linear(intermediate_size, hidden_size, bias=False)
-        
-        # Use level1 Swish operator directly
         self.swish = Swish()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -135,7 +170,8 @@ class SwiGLUMLP(nn.Module):
 
 
 class LlamaDecoderLayer(nn.Module):
-    """Single Llama decoder layer using level1 operators."""
+    """Single Llama decoder layer with paged attention."""
+    
     def __init__(
         self,
         hidden_size: int,
@@ -145,14 +181,27 @@ class LlamaDecoderLayer(nn.Module):
         intermediate_size: int,
         max_seq_len: int = 8192,
         rope_theta: float = 10000.0,
+        rope_scaling: Optional[Dict[str, Any]] = None,
         rms_norm_eps: float = 1e-6,
         block_size: int = 16,
+        num_blocks: int = 1024,
+        layer_idx: int = 0,
     ):
         super().__init__()
-        # Use level1 RMSNorm operator directly with learnable weight and dim=-1 for (batch, seq, hidden)
+        self.layer_idx = layer_idx
+        
         self.input_layernorm = RMSNorm(hidden_size, rms_norm_eps, learnable_weight=True, dim=-1)
         self.self_attn = LlamaAttention(
-            hidden_size, num_heads, num_kv_heads, head_dim, max_seq_len, rope_theta, block_size
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            max_seq_len=max_seq_len,
+            rope_theta=rope_theta,
+            rope_scaling=rope_scaling,
+            block_size=block_size,
+            num_blocks=num_blocks,
+            layer_idx=layer_idx,
         )
         self.post_attention_layernorm = RMSNorm(hidden_size, rms_norm_eps, learnable_weight=True, dim=-1)
         self.mlp = SwiGLUMLP(hidden_size, intermediate_size)
@@ -160,14 +209,12 @@ class LlamaDecoderLayer(nn.Module):
     def forward(
         self, 
         x: torch.Tensor, 
-        kv_cache_pool: torch.Tensor,
-        block_table: torch.Tensor,
-        context_lens: torch.Tensor,
+        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         # Self-attention with residual
         residual = x
         x = self.input_layernorm(x)
-        x = self.self_attn(x, kv_cache_pool, block_table, context_lens)
+        x = self.self_attn(x, attn_metadata)
         x = residual + x
 
         # MLP with residual
@@ -178,6 +225,10 @@ class LlamaDecoderLayer(nn.Module):
 
         return x
 
+    def reset_cache(self):
+        """Reset this layer's KV cache."""
+        self.self_attn.reset_cache()
+
 
 # ============================================================================
 # Main Model Class
@@ -187,15 +238,17 @@ class Model(nn.Module):
     """
     Llama-3.1 style decoder-only transformer with Paged KV Cache.
     
-    Uses level1 operators from KernelBench directly (no wrappers):
+    Aligned with vLLM's design:
+    - Each decoder layer has its own KV cache
+    - Uses AttentionMetadata for cache management
+    - Supports both prefill and decode phases
+    
+    Uses level1 operators:
     - RMSNorm (with learnable_weight=True, dim=-1)
     - RotaryEmbedding (with layout="bhsd")
     - GroupedQueryAttention (with paged KV cache)
     - Linear
     - Swish
-    
-    For HuggingFace integration (weight loading, validation), use LlamaAdapter
-    from hf_adapters.py.
     """
     
     def __init__(
@@ -209,13 +262,14 @@ class Model(nn.Module):
         intermediate_size: int = 14336,
         max_seq_len: int = 8192,
         rope_theta: float = 500000.0,
+        rope_scaling: Optional[Dict[str, Any]] = None,
         rms_norm_eps: float = 1e-5,
         block_size: int = 16,
-        **kwargs  # Accept and ignore extra kwargs for flexibility
+        num_blocks: int = 1024,
+        **kwargs
     ):
         super().__init__()
         
-        # Store config values
         if head_dim is None:
             head_dim = hidden_size // num_heads
         
@@ -228,13 +282,15 @@ class Model(nn.Module):
         self.intermediate_size = intermediate_size
         self.max_seq_len = max_seq_len
         self.rope_theta = rope_theta
+        self.rope_scaling = rope_scaling
         self.rms_norm_eps = rms_norm_eps
         self.block_size = block_size
+        self.num_blocks = num_blocks
         
         # Token embedding
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
         
-        # Decoder layers using level1 operators
+        # Decoder layers - each with its own KV cache
         self.layers = nn.ModuleList([
             LlamaDecoderLayer(
                 hidden_size=hidden_size,
@@ -244,83 +300,172 @@ class Model(nn.Module):
                 intermediate_size=intermediate_size,
                 max_seq_len=max_seq_len,
                 rope_theta=rope_theta,
+                rope_scaling=rope_scaling,
                 rms_norm_eps=rms_norm_eps,
                 block_size=block_size,
+                num_blocks=num_blocks,
+                layer_idx=i,
             )
-            for _ in range(num_layers)
+            for i in range(num_layers)
         ])
         
-        # Final normalization using level1 RMSNorm directly
+        # Final norm and LM head
         self.norm = RMSNorm(hidden_size, rms_norm_eps, learnable_weight=True, dim=-1)
         self.lm_head = Linear(hidden_size, vocab_size, bias=False)
 
     def forward(
         self, 
-        input_ids: torch.Tensor, 
-        kv_cache_pool: torch.Tensor,
-        block_table: torch.Tensor,
-        context_lens: torch.Tensor,
+        input_ids: torch.Tensor,
+        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         """
-        Forward pass with paged KV cache.
+        Forward pass with paged KV cache (vLLM-style interface).
         
         Args:
             input_ids: Input token IDs (batch_size, seq_len)
-            kv_cache_pool: Paged KV cache (num_blocks, block_size, num_kv_heads, head_dim, 2)
-            block_table: Block table (batch_size, max_blocks_per_seq)
-            context_lens: Context lengths (batch_size,)
+            attn_metadata: Attention metadata containing:
+                - slot_mapping: Where to write new K,V in cache
+                - block_table: How to read K,V from cache
+                - context_lens: Tokens already in cache
+                - is_prefill: Whether this is prefill or decode
             
         Returns:
             logits: Output logits (batch_size, seq_len, vocab_size)
         """
         x = self.embed_tokens(input_ids)
 
+        # All layers share the same block_table but each has its own cache
         for layer in self.layers:
-            x = layer(x, kv_cache_pool, block_table, context_lens)
+            x = layer(x, attn_metadata)
 
         x = self.norm(x)
         logits = self.lm_head(x)
         return logits
 
+    def reset_cache(self):
+        """Reset all layer KV caches."""
+        for layer in self.layers:
+            layer.reset_cache()
 
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
+    def prefill(
+        self,
+        input_ids: torch.Tensor,
+        block_table: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Prefill (prompt processing) - process all prompt tokens at once.
+        
+        Args:
+            input_ids: (batch_size, seq_len) prompt token IDs
+            block_table: (batch_size, max_blocks_per_seq) block assignments
+            
+        Returns:
+            logits: (batch_size, seq_len, vocab_size)
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+        
+        # All tokens are new (no context)
+        context_lens = torch.zeros(batch_size, dtype=torch.long, device=device)
+        seq_lens = torch.full((batch_size,), seq_len, dtype=torch.long, device=device)
+        
+        attn_metadata = create_attention_metadata(
+            batch_size=batch_size,
+            seq_lens=seq_lens,
+            context_lens=context_lens,
+            block_table=block_table,
+            block_size=self.block_size,
+            device=device,
+        )
+        
+        return self.forward(input_ids, attn_metadata)
 
-# Default reduced config for benchmarking
-batch_size = 2
-sequence_length = 512
-context_length = 1024  # Tokens already in KV cache
-vocab_size = 128256
-hidden_size = 4096
-num_layers = 8  # Reduced
-num_heads = 32
-num_kv_heads = 8
-head_dim = 128
-intermediate_size = 14336
-block_size = 16
-max_blocks_per_seq = (context_length + sequence_length) // block_size + 1
-num_blocks = batch_size * max_blocks_per_seq + 100  # Extra blocks for safety
+    def decode(
+        self,
+        input_ids: torch.Tensor,
+        block_table: torch.Tensor,
+        context_lens: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Decode (token generation) - process one token at a time.
+        
+        Args:
+            input_ids: (batch_size, 1) new token IDs
+            block_table: (batch_size, max_blocks_per_seq) block assignments
+            context_lens: (batch_size,) tokens already processed
+            
+        Returns:
+            logits: (batch_size, 1, vocab_size)
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+        
+        assert seq_len == 1, "Decode should process one token at a time"
+        
+        seq_lens = context_lens + 1
+        
+        attn_metadata = create_attention_metadata(
+            batch_size=batch_size,
+            seq_lens=seq_lens,
+            context_lens=context_lens,
+            block_table=block_table,
+            block_size=self.block_size,
+            device=device,
+        )
+        
+        return self.forward(input_ids, attn_metadata)
 
-
-def get_inputs():
-    """Get benchmark inputs including paged KV cache."""
-    input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length))
-    kv_cache_pool = torch.randn(num_blocks, block_size, num_kv_heads, head_dim, 2)
-    block_table = torch.randint(0, num_blocks, (batch_size, max_blocks_per_seq))
-    context_lens = torch.full((batch_size,), context_length, dtype=torch.long)
-    return [input_ids, kv_cache_pool, block_table, context_lens]
-
-
-def get_init_inputs():
-    """Get model initialization inputs."""
-    return [{
-        'vocab_size': vocab_size,
-        'hidden_size': hidden_size,
-        'num_layers': num_layers,
-        'num_heads': num_heads,
-        'num_kv_heads': num_kv_heads,
-        'head_dim': head_dim,
-        'intermediate_size': intermediate_size,
-        'block_size': block_size,
-    }]
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int = 100,
+        block_table: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Generate tokens autoregressively.
+        
+        Args:
+            input_ids: (batch_size, prompt_len) prompt token IDs
+            max_new_tokens: Maximum number of tokens to generate
+            block_table: Optional pre-allocated block table
+            
+        Returns:
+            generated_ids: (batch_size, prompt_len + max_new_tokens)
+        """
+        batch_size, prompt_len = input_ids.shape
+        device = input_ids.device
+        
+        # Reset caches
+        self.reset_cache()
+        
+        # Allocate block table if not provided
+        if block_table is None:
+            max_seq_len = prompt_len + max_new_tokens
+            max_blocks = (max_seq_len + self.block_size - 1) // self.block_size
+            block_table = torch.arange(
+                max_blocks, device=device, dtype=torch.long
+            ).unsqueeze(0).expand(batch_size, -1).contiguous()
+            # Simple contiguous allocation - in practice would use block allocator
+            for i in range(batch_size):
+                block_table[i] = torch.arange(
+                    i * max_blocks, 
+                    (i + 1) * max_blocks, 
+                    device=device
+                ) % self.num_blocks
+        
+        # Prefill
+        logits = self.prefill(input_ids, block_table)
+        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+        
+        generated = [input_ids, next_token]
+        context_lens = torch.full((batch_size,), prompt_len, dtype=torch.long, device=device)
+        
+        # Decode loop
+        for _ in range(max_new_tokens - 1):
+            context_lens += 1
+            logits = self.decode(next_token, block_table, context_lens)
+            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            generated.append(next_token)
+        
+        return torch.cat(generated, dim=1)

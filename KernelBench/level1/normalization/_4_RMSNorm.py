@@ -12,6 +12,11 @@ class Model(nn.Module):
     
     Used by: Llama, Mistral, Qwen, Gemma, Yi, DeepSeek, Phi
     
+    Implements exact HuggingFace LlamaRMSNorm behavior:
+    - Casts to float32 for numerical stability (important for bf16)
+    - Uses rsqrt for computation
+    - Returns result in input dtype
+    
     Supports two layouts:
         - dim=1: Input shape (batch_size, num_features, *) - normalize along dim 1
         - dim=-1: Input shape (batch_size, seq_len, num_features) - normalize along last dim (Llama style)
@@ -47,6 +52,8 @@ class Model(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Applies RMS Normalization to the input tensor.
+        
+        Matches HuggingFace's LlamaRMSNorm exactly for numerical precision.
 
         Args:
             x (torch.Tensor): Input tensor. Shape depends on dim parameter:
@@ -56,17 +63,23 @@ class Model(nn.Module):
         Returns:
             torch.Tensor: Output tensor with RMS Normalization applied, same shape as input.
         """
-        # Calculate the RMS along the specified dimension
-        rms = torch.sqrt(torch.mean(x ** 2, dim=self.dim, keepdim=True) + self.eps)
-
-        # Normalize the input by dividing by the RMS
-        normalized = x / rms
+        input_dtype = x.dtype
+        # Cast to float32 for numerical stability (matches HuggingFace)
+        x = x.to(torch.float32)
         
-        # Apply learnable weight if enabled
+        # Compute variance = mean(x^2) along the normalization dimension
+        variance = x.pow(2).mean(dim=self.dim, keepdim=True)
+        
+        # Normalize using rsqrt (matches HuggingFace exactly)
+        x = x * torch.rsqrt(variance + self.eps)
+        
+        # Apply learnable weight if enabled, then cast back to input dtype
         if self.weight is not None:
-            normalized = normalized * self.weight
+            x = self.weight * x.to(input_dtype)
+        else:
+            x = x.to(input_dtype)
         
-        return normalized
+        return x
 
 
 PARAMETERS = [

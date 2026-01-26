@@ -1,23 +1,104 @@
+"""
+Rotary Position Embedding (RoPE)
+
+Used by: Llama, Qwen, Mistral, Gemma, Yi, DeepSeek, Phi
+
+Applies rotary position embeddings to query and key tensors by rotating
+pairs of dimensions using precomputed cos/sin values based on position.
+
+Supports multiple RoPE types:
+- "default": Standard RoPE
+- "llama3": Llama-3.1 style with piecewise frequency scaling
+
+Shapes (depends on layout parameter):
+    layout="bshd": (batch_size, seq_len, num_heads, head_dim) - default
+    layout="bhsd": (batch_size, num_heads, seq_len, head_dim) - Llama attention style
+"""
+
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from task_params import DISTRIBUTIONS, get_supported_distributions
+import math
 import torch
 import torch.nn as nn
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Any
+
+
+def compute_default_inv_freq(
+    head_dim: int,
+    base: float,
+    device: torch.device = None,
+) -> torch.Tensor:
+    """Compute standard RoPE inverse frequencies."""
+    inv_freq = 1.0 / (
+        base ** (torch.arange(0, head_dim, 2, dtype=torch.float, device=device) / head_dim)
+    )
+    return inv_freq
+
+
+def compute_llama3_inv_freq(
+    head_dim: int,
+    base: float,
+    factor: float,
+    low_freq_factor: float,
+    high_freq_factor: float,
+    original_max_position_embeddings: int,
+    device: torch.device = None,
+) -> torch.Tensor:
+    """
+    Compute Llama-3.1 style inverse frequencies with piecewise scaling.
+    
+    This implements the llama3 RoPE scaling from the transformers library:
+    - For wavelengths < high_freq_wavelen: keep inv_freq unchanged
+    - For wavelengths > low_freq_wavelen: divide inv_freq by factor
+    - For wavelengths in between: smoothly interpolate
+    
+    Args:
+        head_dim: Dimension of each attention head
+        base: Base frequency (rope_theta)
+        factor: Scaling factor (typically 8.0 for Llama-3.1)
+        low_freq_factor: Low frequency factor (typically 1.0)
+        high_freq_factor: High frequency factor (typically 4.0)
+        original_max_position_embeddings: Original context length (typically 8192)
+        device: Device for tensor creation
+        
+    Returns:
+        Scaled inverse frequencies
+    """
+    # Compute base inverse frequencies
+    inv_freq = 1.0 / (
+        base ** (torch.arange(0, head_dim, 2, dtype=torch.float, device=device) / head_dim)
+    )
+    
+    old_context_len = original_max_position_embeddings
+    
+    low_freq_wavelen = old_context_len / low_freq_factor
+    high_freq_wavelen = old_context_len / high_freq_factor
+    
+    wavelen = 2 * math.pi / inv_freq
+    
+    # wavelen < high_freq_wavelen: do nothing
+    # wavelen > low_freq_wavelen: divide by factor
+    inv_freq_llama = torch.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
+    
+    # otherwise: interpolate between the two, using a smooth factor
+    smooth_factor = (old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
+    smoothed_inv_freq = (1 - smooth_factor) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
+    
+    is_medium_freq = ~(wavelen < high_freq_wavelen) & ~(wavelen > low_freq_wavelen)
+    inv_freq_llama = torch.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
+    
+    return inv_freq_llama
+
 
 class Model(nn.Module):
     """
-    Rotary Position Embedding (RoPE)
+    Rotary Position Embedding (RoPE) with support for Llama-3.1 scaling.
     
-    Used by: Llama, Qwen, Mistral, Gemma, Yi, DeepSeek, Phi
-    
-    Applies rotary position embeddings to query and key tensors by rotating
-    pairs of dimensions using precomputed cos/sin values based on position.
-    
-    Shapes (depends on layout parameter):
-        layout="bshd": (batch_size, seq_len, num_heads, head_dim) - default
-        layout="bhsd": (batch_size, num_heads, seq_len, head_dim) - Llama attention style
+    Supports:
+    - Standard RoPE (rope_type="default")
+    - Llama-3.1 RoPE scaling (rope_type="llama3")
     """
     
     def __init__(
@@ -25,7 +106,8 @@ class Model(nn.Module):
         head_dim: int, 
         max_seq_len: int = 8192, 
         base: float = 10000.0,
-        layout: Literal["bshd", "bhsd"] = "bshd"
+        layout: Literal["bshd", "bhsd"] = "bshd",
+        rope_scaling: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize RoPE.
@@ -33,27 +115,61 @@ class Model(nn.Module):
         Args:
             head_dim: Dimension of each attention head (must be even)
             max_seq_len: Maximum sequence length for precomputed embeddings
-            base: Base for the frequency computation
+            base: Base for the frequency computation (rope_theta)
             layout: Input tensor layout. 
                     "bshd" = (batch, seq, heads, head_dim) - default
                     "bhsd" = (batch, heads, seq, head_dim) - Llama attention style
+            rope_scaling: Optional RoPE scaling config dict with keys:
+                    - rope_type: "default" or "llama3"
+                    - factor: Scaling factor (for llama3)
+                    - low_freq_factor: Low frequency factor (for llama3)
+                    - high_freq_factor: High frequency factor (for llama3)
+                    - original_max_position_embeddings: Original context length (for llama3)
         """
         super(Model, self).__init__()
         self.head_dim = head_dim
         self.max_seq_len = max_seq_len
         self.base = base
         self.layout = layout
+        self.rope_scaling = rope_scaling
         
-        # Precompute inverse frequencies
-        inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        # Determine rope type
+        rope_type = "default"
+        if rope_scaling is not None:
+            rope_type = rope_scaling.get("rope_type", "default")
+        
+        self.rope_type = rope_type
+        
+        # Compute inverse frequencies based on rope type
+        if rope_type == "llama3":
+            inv_freq = compute_llama3_inv_freq(
+                head_dim=head_dim,
+                base=base,
+                factor=rope_scaling["factor"],
+                low_freq_factor=rope_scaling["low_freq_factor"],
+                high_freq_factor=rope_scaling["high_freq_factor"],
+                original_max_position_embeddings=rope_scaling["original_max_position_embeddings"],
+            )
+        else:
+            inv_freq = compute_default_inv_freq(head_dim, base)
+        
         self.register_buffer('inv_freq', inv_freq)
         
         # Precompute cos and sin for all positions
-        t = torch.arange(max_seq_len).float()
-        freqs = torch.outer(t, inv_freq)
+        self._update_cos_sin_cache(max_seq_len)
+    
+    def _update_cos_sin_cache(self, seq_len: int, device: torch.device = None):
+        """Update the cos/sin cache for the given sequence length."""
+        if device is None:
+            device = self.inv_freq.device
+            
+        t = torch.arange(seq_len, device=device, dtype=torch.float)
+        freqs = torch.outer(t, self.inv_freq.to(device))
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer('cos_cached', emb.cos())
-        self.register_buffer('sin_cached', emb.sin())
+        
+        self.register_buffer('cos_cached', emb.cos(), persistent=False)
+        self.register_buffer('sin_cached', emb.sin(), persistent=False)
+        self.max_seq_len = seq_len
     
     def forward(self, q: torch.Tensor, k: torch.Tensor, position_ids: Optional[torch.Tensor] = None) -> tuple:
         """
@@ -74,6 +190,14 @@ class Model(nn.Module):
             seq_len = q.shape[2]  # (batch, heads, seq, head_dim)
         else:
             seq_len = q.shape[1]  # (batch, seq, heads, head_dim)
+        
+        # Extend cache if needed
+        if position_ids is not None:
+            max_pos = position_ids.max().item() + 1
+            if max_pos > self.max_seq_len:
+                self._update_cos_sin_cache(max_pos, q.device)
+        elif seq_len > self.max_seq_len:
+            self._update_cos_sin_cache(seq_len, q.device)
         
         if position_ids is None:
             cos = self.cos_cached[:seq_len]
@@ -111,7 +235,7 @@ class Model(nn.Module):
         x1 = x[..., :self.head_dim // 2]
         x2 = x[..., self.head_dim // 2:]
         
-        # Rotate
+        # Rotate (matches HuggingFace's rotate_half)
         rotated = torch.cat((-x2, x1), dim=-1)
         
         return x * cos + rotated * sin
