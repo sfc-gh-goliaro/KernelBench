@@ -205,14 +205,14 @@ def llama_8b_models():
 def test_llama31_8b_prefill_alignment(llama_8b_models):
     """
     Test prefill (prompt processing) alignment for Llama-3.1-8B.
+    
+    Uses generate(max_new_tokens=0, return_logits=True) to get prefill logits.
     """
     hf_model, kb_model, tokenizer, kb_config, llama_module = llama_8b_models
     
     print("\n" + "="*70)
     print("Testing Llama-3.1-8B Prefill Alignment")
     print("="*70)
-    
-    kb_model.reset_cache()
     
     for i, prompt in enumerate(TEST_PROMPTS):
         encoded = tokenizer(prompt, return_tensors="pt").to(DEVICE)
@@ -228,11 +228,14 @@ def test_llama31_8b_prefill_alignment(llama_8b_models):
             hf_out = hf_model(input_ids=input_ids, use_cache=False)
             hf_logits = hf_out.logits
             
-            # Reset cache before each prompt
-            kb_model.reset_cache()
-            
-            # KernelBench prefill
-            kb_logits = kb_model.prefill(input_ids, block_table)
+            # KernelBench prefill using generate with max_new_tokens=0
+            _, kb_logits_list = kb_model.generate(
+                input_ids, 
+                max_new_tokens=0, 
+                block_table=block_table,
+                return_logits=True
+            )
+            kb_logits = kb_logits_list[0]  # Prefill logits
         
         # Compare last position logits
         hf_last = hf_logits[:, -1, :]
@@ -269,6 +272,8 @@ def test_llama31_8b_prefill_alignment(llama_8b_models):
 def test_llama31_8b_generation(llama_8b_models):
     """
     Test continuous batching generation for Llama-3.1-8B.
+    
+    Uses generate() for KernelBench model and compares with HuggingFace generation.
     """
     hf_model, kb_model, tokenizer, kb_config, llama_module = llama_8b_models
     
@@ -286,34 +291,20 @@ def test_llama31_8b_generation(llama_8b_models):
         input_ids = encoded['input_ids']
         batch_size, prompt_len = input_ids.shape
         
-        # Reset caches
-        kb_model.reset_cache()
-        
         # Allocate blocks
         max_seq = prompt_len + num_tokens + 10
         max_blocks = (max_seq + kb_config['block_size'] - 1) // kb_config['block_size']
         block_table = torch.arange(max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0)
         
-        hf_generated = []
-        kb_generated = []
-        
         with torch.no_grad():
-            # HF Prefill
+            # HuggingFace generation (manual loop to match greedy decoding)
+            hf_generated = []
             hf_out = hf_model(input_ids=input_ids, use_cache=True)
             hf_past = hf_out.past_key_values
             hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
             hf_generated.append(hf_next)
             
-            # KB Prefill
-            kb_out = kb_model.prefill(input_ids, block_table)
-            kb_next = kb_out[:, -1, :].argmax(dim=-1, keepdim=True)
-            kb_generated.append(kb_next)
-            
-            context_lens = torch.tensor([prompt_len], dtype=torch.long, device=DEVICE)
-            
-            # Generate tokens
             for step in range(num_tokens - 1):
-                # HF decode
                 hf_out = hf_model(
                     input_ids=hf_next,
                     past_key_values=hf_past,
@@ -322,18 +313,20 @@ def test_llama31_8b_generation(llama_8b_models):
                 hf_past = hf_out.past_key_values
                 hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
                 hf_generated.append(hf_next)
-                
-                # KB decode
-                kb_out = kb_model.decode(kb_next, block_table, context_lens)
-                kb_next = kb_out[:, -1, :].argmax(dim=-1, keepdim=True)
-                kb_generated.append(kb_next)
-                
-                context_lens += 1
+            
+            hf_tokens = torch.cat(hf_generated, dim=1)
+            
+            # KernelBench generation using generate()
+            kb_full_seq = kb_model.generate(
+                input_ids,
+                max_new_tokens=num_tokens,
+                block_table=block_table,
+                return_logits=False
+            )
+            # Extract only the generated tokens (exclude prompt)
+            kb_tokens = kb_full_seq[:, prompt_len:]
         
         # Decode generated tokens
-        hf_tokens = torch.cat(hf_generated, dim=1)
-        kb_tokens = torch.cat(kb_generated, dim=1)
-        
         hf_text = tokenizer.decode(hf_tokens[0], skip_special_tokens=True)
         kb_text = tokenizer.decode(kb_tokens[0], skip_special_tokens=True)
         
@@ -439,14 +432,13 @@ def test_llama31_70b_prefill_alignment(llama_70b_models):
     Test prefill alignment for Llama-3.1-70B.
     
     This test requires significant GPU memory (>80GB recommended).
+    Uses generate(max_new_tokens=0, return_logits=True) to get prefill logits.
     """
     hf_model, kb_model, tokenizer, kb_config, llama_module = llama_70b_models
     
     print("\n" + "="*70)
     print("Testing Llama-3.1-70B Prefill Alignment")
     print("="*70)
-    
-    kb_model.reset_cache()
     
     # Use only first 2 prompts to save memory
     for i, prompt in enumerate(TEST_PROMPTS[:2]):
@@ -461,8 +453,14 @@ def test_llama31_70b_prefill_alignment(llama_70b_models):
             hf_out = hf_model(input_ids=input_ids, use_cache=False)
             hf_logits = hf_out.logits
             
-            kb_model.reset_cache()
-            kb_logits = kb_model.prefill(input_ids, block_table)
+            # KernelBench prefill using generate with max_new_tokens=0
+            _, kb_logits_list = kb_model.generate(
+                input_ids,
+                max_new_tokens=0,
+                block_table=block_table,
+                return_logits=True
+            )
+            kb_logits = kb_logits_list[0]  # Prefill logits
         
         hf_last = hf_logits[:, -1, :]
         kb_last = kb_logits[:, -1, :]

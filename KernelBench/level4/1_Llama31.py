@@ -347,7 +347,7 @@ class Model(nn.Module):
         for layer in self.layers:
             layer.reset_cache()
 
-    def prefill(
+    def _prefill(
         self,
         input_ids: torch.Tensor,
         block_table: torch.Tensor,
@@ -380,7 +380,7 @@ class Model(nn.Module):
         
         return self.forward(input_ids, attn_metadata)
 
-    def decode(
+    def _decode(
         self,
         input_ids: torch.Tensor,
         block_table: torch.Tensor,
@@ -421,17 +421,25 @@ class Model(nn.Module):
         input_ids: torch.Tensor,
         max_new_tokens: int = 100,
         block_table: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+        return_logits: bool = False,
+    ) -> torch.Tensor | Tuple[torch.Tensor, List[torch.Tensor]]:
         """
         Generate tokens autoregressively.
         
         Args:
             input_ids: (batch_size, prompt_len) prompt token IDs
-            max_new_tokens: Maximum number of tokens to generate
+            max_new_tokens: Maximum number of tokens to generate. If 0, only
+                performs prefill and returns logits (requires return_logits=True).
             block_table: Optional pre-allocated block table
+            return_logits: If True, also return logits at each generation step
             
         Returns:
-            generated_ids: (batch_size, prompt_len + max_new_tokens)
+            If return_logits=False:
+                generated_ids: (batch_size, prompt_len + max_new_tokens)
+            If return_logits=True:
+                Tuple of (generated_ids, logits_list) where logits_list contains
+                logits tensors for prefill and each decode step.
+                For max_new_tokens=0: returns (input_ids, [prefill_logits])
         """
         batch_size, prompt_len = input_ids.shape
         device = input_ids.device
@@ -441,7 +449,7 @@ class Model(nn.Module):
         
         # Allocate block table if not provided
         if block_table is None:
-            max_seq_len = prompt_len + max_new_tokens
+            max_seq_len = prompt_len + max(max_new_tokens, 1)
             max_blocks = (max_seq_len + self.block_size - 1) // self.block_size
             block_table = torch.arange(
                 max_blocks, device=device, dtype=torch.long
@@ -455,17 +463,33 @@ class Model(nn.Module):
                 ) % self.num_blocks
         
         # Prefill
-        logits = self.prefill(input_ids, block_table)
-        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+        prefill_logits = self._prefill(input_ids, block_table)
+        
+        # Handle max_new_tokens=0 case (prefill only)
+        if max_new_tokens == 0:
+            if return_logits:
+                return input_ids, [prefill_logits]
+            else:
+                # No new tokens to generate, just return input
+                return input_ids
+        
+        all_logits = [prefill_logits] if return_logits else None
+        next_token = prefill_logits[:, -1, :].argmax(dim=-1, keepdim=True)
         
         generated = [input_ids, next_token]
         context_lens = torch.full((batch_size,), prompt_len, dtype=torch.long, device=device)
         
         # Decode loop
         for _ in range(max_new_tokens - 1):
-            context_lens += 1
-            logits = self.decode(next_token, block_table, context_lens)
-            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            decode_logits = self._decode(next_token, block_table, context_lens)
+            context_lens += 1  # Increment after decode (context grows after each step)
+            if return_logits:
+                all_logits.append(decode_logits)
+            next_token = decode_logits[:, -1, :].argmax(dim=-1, keepdim=True)
             generated.append(next_token)
         
-        return torch.cat(generated, dim=1)
+        generated_ids = torch.cat(generated, dim=1)
+        
+        if return_logits:
+            return generated_ids, all_logits
+        return generated_ids
