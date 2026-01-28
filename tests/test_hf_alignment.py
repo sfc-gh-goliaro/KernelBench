@@ -243,6 +243,127 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     }
 
 
+def _get_needed_weight_keys(hf_config, num_layers: int) -> set:
+    """
+    Determine which weight keys are needed for a truncated model.
+    
+    This avoids having to create the model just to get its state dict keys.
+    """
+    needed_keys = set()
+    
+    # Embedding and output layers (always needed)
+    needed_keys.add("model.embed_tokens.weight")
+    needed_keys.add("model.norm.weight")
+    needed_keys.add("lm_head.weight")
+    
+    # Per-layer weights
+    for i in range(num_layers):
+        prefix = f"model.layers.{i}."
+        # Attention
+        needed_keys.add(prefix + "self_attn.q_proj.weight")
+        needed_keys.add(prefix + "self_attn.k_proj.weight")
+        needed_keys.add(prefix + "self_attn.v_proj.weight")
+        needed_keys.add(prefix + "self_attn.o_proj.weight")
+        # MLP
+        needed_keys.add(prefix + "mlp.gate_proj.weight")
+        needed_keys.add(prefix + "mlp.up_proj.weight")
+        needed_keys.add(prefix + "mlp.down_proj.weight")
+        # Layer norms
+        needed_keys.add(prefix + "input_layernorm.weight")
+        needed_keys.add(prefix + "post_attention_layernorm.weight")
+    
+    return needed_keys
+
+
+def _load_truncated_model(model_path: str, hf_config, num_layers: int, dtype, device: str):
+    """
+    Create and load a truncated model efficiently using meta tensors.
+    
+    This avoids:
+    1. Loading all checkpoint shards (only loads needed ones)
+    2. Random weight initialization (uses meta tensors, then materializes from checkpoint)
+    
+    Args:
+        model_path: Local path to the model files
+        hf_config: HuggingFace config (already modified with num_hidden_layers)
+        num_layers: Number of layers to load
+        dtype: Target dtype for weights
+        device: Target device
+        
+    Returns:
+        Loaded HuggingFace model
+    """
+    from safetensors.torch import load_file
+    from accelerate import init_empty_weights
+    from accelerate.utils import set_module_tensor_to_device
+    import json
+    
+    # Determine which weight keys we need
+    needed_keys = _get_needed_weight_keys(hf_config, num_layers)
+    
+    # Check for sharded vs single-file safetensors
+    index_file = os.path.join(model_path, "model.safetensors.index.json")
+    single_file = os.path.join(model_path, "model.safetensors")
+    
+    if os.path.exists(index_file):
+        # Sharded safetensors - find which shards we need
+        with open(index_file) as f:
+            index = json.load(f)
+        weight_map = index["weight_map"]
+        
+        # Find which shard files contain weights we need
+        needed_files = set()
+        for key in needed_keys:
+            if key in weight_map:
+                needed_files.add(weight_map[key])
+        
+        total_shards = len(set(weight_map.values()))
+        print(f"  Loading {len(needed_files)} of {total_shards} checkpoint shards...")
+        
+        # Load only from needed shards
+        loaded_state = {}
+        for shard_file in needed_files:
+            shard_path = os.path.join(model_path, shard_file)
+            shard_data = load_file(shard_path, device="cpu")
+            for key, tensor in shard_data.items():
+                if key in needed_keys:
+                    loaded_state[key] = tensor
+            # Free memory immediately
+            del shard_data
+    elif os.path.exists(single_file):
+        # Single safetensors file
+        print("  Loading from single safetensors file...")
+        shard_data = load_file(single_file, device="cpu")
+        loaded_state = {k: v for k, v in shard_data.items() if k in needed_keys}
+        del shard_data
+    else:
+        raise FileNotFoundError(
+            f"No safetensors files found in {model_path}. "
+            "Memory-efficient loading requires safetensors format."
+        )
+    
+    # Verify we found all needed weights
+    missing_keys = needed_keys - set(loaded_state.keys())
+    if missing_keys:
+        raise RuntimeError(f"Missing weights for truncated model: {missing_keys}")
+    
+    # Create model with meta tensors (no memory allocation, no random init)
+    print("  Creating model architecture...")
+    with init_empty_weights():
+        hf_model = AutoModelForCausalLM.from_config(
+            hf_config,
+            torch_dtype=dtype,
+            attn_implementation="eager",
+        )
+    
+    # Materialize each parameter directly from loaded weights
+    print("  Loading weights into model...")
+    for name, tensor in loaded_state.items():
+        set_module_tensor_to_device(hf_model, name, device, value=tensor.to(dtype))
+    
+    return hf_model
+
+
 def load_models(model_name: str, max_layers: Optional[int] = None):
     """
     Load HuggingFace and KernelBench models.
@@ -250,9 +371,11 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     Args:
         model_name: HuggingFace model name
         max_layers: Number of layers to use. If None, uses all layers.
-                   If less than total layers, modifies config before loading
-                   to avoid loading unnecessary weights into memory.
+                   If less than total layers, uses memory-efficient loading
+                   that only loads the needed checkpoint shards.
     """
+    from huggingface_hub import snapshot_download
+    
     print(f"\nLoading models from {model_name}...")
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -270,22 +393,32 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     
     truncated = num_layers < total_layers
     
-    # If truncating, modify config BEFORE loading to save memory
-    # This way HuggingFace won't load weights for layers we don't need
     if truncated:
-        print(f"Configuring model with {num_layers}/{total_layers} layers to save memory...")
+        # Memory-efficient loading: use meta tensors + selective shard loading
+        print(f"Using memory-efficient loading for {num_layers}/{total_layers} layers...")
+        
+        # Modify config to have fewer layers
         hf_config.num_hidden_layers = num_layers
-    
-    # Use eager attention to match our manual attention implementation
-    # SDPA uses fused CUDA kernels with slightly different numerics
-    hf_model = AutoModelForCausalLM.from_pretrained(
-        model_name, 
-        config=hf_config,  # Use modified config
-        torch_dtype=DTYPE, 
-        device_map=DEVICE,
-        attn_implementation="eager",
-    )
-    hf_model.eval()
+        
+        # Download only safetensors and config files (not .bin weights)
+        model_path = snapshot_download(
+            model_name,
+            allow_patterns=["*.safetensors", "*.json", "*.safetensors.index.json"],
+            ignore_patterns=["*.bin", "*.bin.index.json", "pytorch_model*"],
+        )
+        
+        # Create and load model efficiently (no random init, only needed shards)
+        hf_model = _load_truncated_model(model_path, hf_config, num_layers, DTYPE, DEVICE)
+        hf_model.eval()
+    else:
+        # Full model - use standard loading
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            model_name, 
+            torch_dtype=DTYPE, 
+            device_map=DEVICE,
+            attn_implementation="eager",
+        )
+        hf_model.eval()
     
     # Calculate num_blocks needed for testing
     max_seq_len = 4096  # Maximum sequence length for tests
@@ -294,8 +427,6 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     num_blocks = (max_seq_len // block_size + 1) * num_layers * 2
     
     # Create KB config with the number of layers we're using
-    # Reset hf_config.num_hidden_layers for kb_config creation, then override
-    original_num_layers = total_layers
     kb_config = create_kb_model_from_hf_config(hf_config, num_blocks)
     kb_config['num_layers'] = num_layers  # Ensure correct layer count
     
