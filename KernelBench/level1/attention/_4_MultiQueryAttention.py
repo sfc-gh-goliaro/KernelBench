@@ -212,6 +212,7 @@ class Model(nn.Module):
         
         All tokens are new, so we only compute attention on the input K,V.
         K and V are broadcast across all query heads (MQA).
+        Uses F.scaled_dot_product_attention (SDPA) for efficiency and alignment with HF.
         
         Args:
             q: (batch_size, num_heads, seq_len, head_dim)
@@ -221,27 +222,21 @@ class Model(nn.Module):
         Returns:
             Output tensor (batch_size, num_heads, seq_len, head_dim)
         """
-        batch_size, num_heads, seq_len, head_dim = q.shape
-        device = q.device
-
-        # Compute attention scores - K broadcasts across all heads
-        # q: (batch, heads, seq, dim), k: (batch, 1, seq, dim)
-        # scores: (batch, heads, seq, seq)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-
-        # Causal mask for prefill: position i can only attend to positions <= i
-        causal_mask = torch.triu(
-            torch.ones(seq_len, seq_len, dtype=torch.bool, device=device),
-            diagonal=1
+        # Expand K, V to match Q's head dimension for SDPA
+        # SDPA requires K, V to have same num_heads as Q for proper broadcasting
+        k_expanded = k.expand(-1, self.num_heads, -1, -1)
+        v_expanded = v.expand(-1, self.num_heads, -1, -1)
+        
+        # Use PyTorch's scaled_dot_product_attention (SDPA)
+        # This automatically handles causal masking, scaling, and uses flash attention when available
+        dropout_p = self.dropout if self.training else 0.0
+        attn_output = F.scaled_dot_product_attention(
+            q, k_expanded, v_expanded,
+            attn_mask=None,
+            dropout_p=dropout_p,
+            is_causal=True,  # Causal attention for prefill
+            scale=self.scale,
         )
-        scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-
-        attn_weights = F.softmax(scores, dim=-1)
-        if self.dropout > 0 and self.training:
-            attn_weights = F.dropout(attn_weights, p=self.dropout)
-
-        # V broadcasts across all heads
-        attn_output = torch.matmul(attn_weights, v)
         return attn_output
 
     def _decode_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -249,6 +244,7 @@ class Model(nn.Module):
                           context_lens: torch.Tensor) -> torch.Tensor:
         """
         Compute attention during decode phase (with cache read).
+        Uses F.scaled_dot_product_attention (SDPA) for efficiency and alignment with HF.
         
         Args:
             q: (batch_size, num_heads, seq_len, head_dim) - typically seq_len=1
@@ -262,6 +258,7 @@ class Model(nn.Module):
         """
         batch_size, num_heads, seq_len, head_dim = q.shape
         device = q.device
+        dtype = q.dtype
 
         # For decode, we need to handle variable context lengths per sequence
         max_context_len = context_lens.max().item()
@@ -284,8 +281,9 @@ class Model(nn.Module):
 
         total_len = k_full.shape[2]
 
-        # Compute attention scores - K broadcasts across all heads
-        scores = torch.matmul(q, k_full.transpose(-2, -1)) * self.scale
+        # Expand K, V to match Q's head dimension for SDPA
+        k_expanded = k_full.expand(-1, num_heads, -1, -1)
+        v_expanded = v_full.expand(-1, num_heads, -1, -1)
 
         # Create attention mask that combines:
         # 1. Causal masking: query at position context_len + i can attend to 0..context_len+i
@@ -313,18 +311,24 @@ class Model(nn.Module):
         else:
             padding_mask = torch.zeros(batch_size, 1, 1, total_len, dtype=torch.bool, device=device)
         
-        # Combine masks
+        # Combine masks: True = masked (don't attend)
         causal_mask = causal_mask.unsqueeze(1)  # (batch, 1, seq_len, total_len)
-        attn_mask = causal_mask | padding_mask
+        bool_mask = causal_mask | padding_mask
+        
+        # Convert boolean mask to float mask for SDPA (0 = attend, -inf = don't attend)
+        # SDPA adds the mask to scores before softmax, so we use 0/-inf format
+        attn_mask = torch.zeros(batch_size, 1, seq_len, total_len, dtype=dtype, device=device)
+        attn_mask = attn_mask.masked_fill(bool_mask, float('-inf'))
 
-        scores = scores.masked_fill(attn_mask, float('-inf'))
-
-        attn_weights = F.softmax(scores, dim=-1)
-        if self.dropout > 0 and self.training:
-            attn_weights = F.dropout(attn_weights, p=self.dropout)
-
-        # V broadcasts across all heads
-        attn_output = torch.matmul(attn_weights, v_full)
+        # Use PyTorch's scaled_dot_product_attention (SDPA)
+        dropout_p = self.dropout if self.training else 0.0
+        attn_output = F.scaled_dot_product_attention(
+            q, k_expanded, v_expanded,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=False,  # We handle causality in the mask
+            scale=self.scale,
+        )
         return attn_output
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,

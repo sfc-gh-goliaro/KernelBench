@@ -211,6 +211,7 @@ class Model(nn.Module):
                            v: torch.Tensor) -> torch.Tensor:
         """
         Compute attention during prefill phase (no cache read needed).
+        Uses F.scaled_dot_product_attention (SDPA) for efficiency and alignment with HF.
         
         All tokens are new, so we only compute attention on the input K,V.
         
@@ -222,28 +223,20 @@ class Model(nn.Module):
         Returns:
             Output tensor (batch_size, num_heads, seq_len, head_dim)
         """
-        batch_size, num_heads, seq_len, head_dim = q.shape
-        device = q.device
-
-        # Repeat K, V to match number of query heads
+        # Repeat K, V to match number of query heads for SDPA
         k_expanded = k.repeat_interleave(self.num_key_value_groups, dim=1)
         v_expanded = v.repeat_interleave(self.num_key_value_groups, dim=1)
 
-        # Compute attention scores
-        scores = torch.matmul(q, k_expanded.transpose(-2, -1)) * self.scale
-
-        # Causal mask for prefill: position i can only attend to positions <= i
-        causal_mask = torch.triu(
-            torch.ones(seq_len, seq_len, dtype=torch.bool, device=device),
-            diagonal=1
+        # Use PyTorch's scaled_dot_product_attention (SDPA)
+        # This automatically handles causal masking, scaling, and uses flash attention when available
+        dropout_p = self.dropout if self.training else 0.0
+        attn_output = F.scaled_dot_product_attention(
+            q, k_expanded, v_expanded,
+            attn_mask=None,
+            dropout_p=dropout_p,
+            is_causal=True,  # Causal attention for prefill
+            scale=self.scale,
         )
-        scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-
-        attn_weights = F.softmax(scores, dim=-1)
-        if self.dropout > 0 and self.training:
-            attn_weights = F.dropout(attn_weights, p=self.dropout)
-
-        attn_output = torch.matmul(attn_weights, v_expanded)
         return attn_output
 
     def _decode_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -286,14 +279,13 @@ class Model(nn.Module):
             k_full = k
             v_full = v
 
-        # Repeat K, V to match number of query heads
+        dtype = q.dtype
+        
+        # Repeat K, V to match number of query heads for SDPA
         k_full = k_full.repeat_interleave(self.num_key_value_groups, dim=1)
         v_full = v_full.repeat_interleave(self.num_key_value_groups, dim=1)
 
         total_len = k_full.shape[2]
-
-        # Compute attention scores
-        scores = torch.matmul(q, k_full.transpose(-2, -1)) * self.scale
 
         # Create attention mask that combines:
         # 1. Causal masking: query at position context_len + i can attend to 0..context_len+i
@@ -321,17 +313,23 @@ class Model(nn.Module):
         else:
             padding_mask = torch.zeros(batch_size, 1, 1, total_len, dtype=torch.bool, device=device)
         
-        # Combine masks
+        # Combine masks: True = masked (don't attend)
         causal_mask = causal_mask.unsqueeze(1)  # (batch, 1, seq_len, total_len)
-        attn_mask = causal_mask | padding_mask
+        bool_mask = causal_mask | padding_mask
 
-        scores = scores.masked_fill(attn_mask, float('-inf'))
+        # Convert boolean mask to float mask for SDPA (0 = attend, -inf = don't attend)
+        attn_mask = torch.zeros(batch_size, 1, seq_len, total_len, dtype=dtype, device=device)
+        attn_mask = attn_mask.masked_fill(bool_mask, float('-inf'))
 
-        attn_weights = F.softmax(scores, dim=-1)
-        if self.dropout > 0 and self.training:
-            attn_weights = F.dropout(attn_weights, p=self.dropout)
-
-        attn_output = torch.matmul(attn_weights, v_full)
+        # Use PyTorch's scaled_dot_product_attention (SDPA)
+        dropout_p = self.dropout if self.training else 0.0
+        attn_output = F.scaled_dot_product_attention(
+            q, k_full, v_full,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=False,  # We handle causality in the mask
+            scale=self.scale,
+        )
         return attn_output
     
     def _gather_kv_from_cache_truncated(self, block_table: torch.Tensor,
