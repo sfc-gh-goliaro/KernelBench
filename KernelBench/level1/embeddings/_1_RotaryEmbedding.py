@@ -9,6 +9,7 @@ pairs of dimensions using precomputed cos/sin values based on position.
 Supports multiple RoPE types:
 - "default": Standard RoPE
 - "llama3": Llama-3.1 style with piecewise frequency scaling
+- "yarn": YaRN (Yet another RoPE extensioN) for extended context
 
 Shapes (depends on layout parameter):
     layout="bshd": (batch_size, seq_len, num_heads, head_dim) - default
@@ -92,13 +93,112 @@ def compute_llama3_inv_freq(
     return inv_freq_llama
 
 
+def yarn_find_correction_dim(
+    num_rotations: float, 
+    dim: int, 
+    base: float = 10000, 
+    max_position_embeddings: int = 2048
+) -> float:
+    """Find the dimension for YaRN correction based on number of rotations."""
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
+        2 * math.log(base)
+    )
+
+
+def yarn_find_correction_range(
+    low_rot: float, 
+    high_rot: float, 
+    dim: int, 
+    base: float = 10000, 
+    max_position_embeddings: int = 2048
+) -> tuple:
+    """Find the dimension range for YaRN correction."""
+    low = math.floor(
+        yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
+    )
+    high = math.ceil(
+        yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
+    )
+    return max(low, 0), min(high, dim - 1)
+
+
+def yarn_linear_ramp_mask(min_val: float, max_val: float, dim: int) -> torch.Tensor:
+    """Create a linear ramp mask for YaRN interpolation."""
+    if min_val == max_val:
+        max_val += 0.001  # Prevent singularity
+    linear_func = (torch.arange(dim, dtype=torch.float32) - min_val) / (max_val - min_val)
+    ramp_func = torch.clamp(linear_func, 0, 1)
+    return ramp_func
+
+
+def yarn_get_mscale(scale: float = 1.0, mscale: float = 1.0) -> float:
+    """Compute the mscale factor for YaRN attention scaling."""
+    if scale <= 1:
+        return 1.0
+    return 0.1 * mscale * math.log(scale) + 1.0
+
+
+def compute_yarn_inv_freq(
+    head_dim: int,
+    base: float,
+    factor: float,
+    original_max_position_embeddings: int,
+    beta_fast: float = 32,
+    beta_slow: float = 1,
+    device: torch.device = None,
+) -> torch.Tensor:
+    """
+    Compute YaRN (Yet another RoPE extensioN) inverse frequencies.
+    
+    YaRN uses a combination of extrapolation and interpolation for different
+    frequency dimensions, blended using a linear ramp.
+    
+    Args:
+        head_dim: Dimension of each attention head
+        base: Base frequency (rope_theta)
+        factor: Scaling factor for context extension
+        original_max_position_embeddings: Original max position embeddings
+        beta_fast: Fast beta for correction range
+        beta_slow: Slow beta for correction range
+        device: Device for tensor creation
+        
+    Returns:
+        Scaled inverse frequencies
+    """
+    dim = head_dim
+    
+    # Extrapolation frequencies (no scaling)
+    freq_extra = 1.0 / (
+        base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
+    )
+    
+    # Interpolation frequencies (scaled by factor)
+    freq_inter = 1.0 / (
+        factor * base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
+    )
+    
+    # Find correction range
+    low, high = yarn_find_correction_range(
+        beta_fast, beta_slow, dim, base, original_max_position_embeddings
+    )
+    
+    # Create linear ramp mask
+    inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dim // 2).to(device)
+    
+    # Blend extra and inter frequencies
+    inv_freq = freq_inter * (1 - inv_freq_mask) + freq_extra * inv_freq_mask
+    
+    return inv_freq
+
+
 class Model(nn.Module):
     """
-    Rotary Position Embedding (RoPE) with support for Llama-3.1 scaling.
+    Rotary Position Embedding (RoPE) with support for various scaling methods.
     
     Supports:
     - Standard RoPE (rope_type="default")
     - Llama-3.1 RoPE scaling (rope_type="llama3")
+    - YaRN RoPE scaling (rope_type="yarn")
     """
     
     def __init__(
@@ -108,6 +208,7 @@ class Model(nn.Module):
         base: float = 10000.0,
         layout: Literal["bshd", "bhsd"] = "bshd",
         rope_scaling: Optional[Dict[str, Any]] = None,
+        interleaved: bool = False,
     ):
         """
         Initialize RoPE.
@@ -120,11 +221,12 @@ class Model(nn.Module):
                     "bshd" = (batch, seq, heads, head_dim) - default
                     "bhsd" = (batch, heads, seq, head_dim) - Llama attention style
             rope_scaling: Optional RoPE scaling config dict with keys:
-                    - rope_type: "default" or "llama3"
-                    - factor: Scaling factor (for llama3)
-                    - low_freq_factor: Low frequency factor (for llama3)
-                    - high_freq_factor: High frequency factor (for llama3)
-                    - original_max_position_embeddings: Original context length (for llama3)
+                    - rope_type/type: "default", "llama3", or "yarn"
+                    - factor: Scaling factor
+                    - For llama3: low_freq_factor, high_freq_factor, original_max_position_embeddings
+                    - For yarn: beta_fast, beta_slow, original_max_position_embeddings
+            interleaved: If True, apply interleaving transformation before RoPE (used by DeepSeek).
+                        This transforms [x0,x1,x2,x3,...] to [x0,x2,...,x1,x3,...] format.
         """
         super(Model, self).__init__()
         self.head_dim = head_dim
@@ -132,11 +234,12 @@ class Model(nn.Module):
         self.base = base
         self.layout = layout
         self.rope_scaling = rope_scaling
+        self.interleaved = interleaved
         
-        # Determine rope type
+        # Determine rope type - support both "rope_type" and "type" keys
         rope_type = "default"
         if rope_scaling is not None:
-            rope_type = rope_scaling.get("rope_type", "default")
+            rope_type = rope_scaling.get("rope_type", rope_scaling.get("type", "default"))
         
         self.rope_type = rope_type
         
@@ -150,6 +253,19 @@ class Model(nn.Module):
                 high_freq_factor=rope_scaling["high_freq_factor"],
                 original_max_position_embeddings=rope_scaling["original_max_position_embeddings"],
             )
+        elif rope_type == "yarn":
+            inv_freq = compute_yarn_inv_freq(
+                head_dim=head_dim,
+                base=base,
+                factor=rope_scaling["factor"],
+                original_max_position_embeddings=rope_scaling["original_max_position_embeddings"],
+                beta_fast=rope_scaling.get("beta_fast", 32),
+                beta_slow=rope_scaling.get("beta_slow", 1),
+            )
+            # Store YaRN mscale parameters
+            self.yarn_factor = rope_scaling["factor"]
+            self.yarn_mscale = rope_scaling.get("mscale", 1.0)
+            self.yarn_mscale_all_dim = rope_scaling.get("mscale_all_dim", 0)
         else:
             inv_freq = compute_default_inv_freq(head_dim, base)
         
@@ -167,8 +283,22 @@ class Model(nn.Module):
         freqs = torch.outer(t, self.inv_freq.to(device))
         emb = torch.cat((freqs, freqs), dim=-1)
         
-        self.register_buffer('cos_cached', emb.cos(), persistent=False)
-        self.register_buffer('sin_cached', emb.sin(), persistent=False)
+        cos = emb.cos()
+        sin = emb.sin()
+        
+        # Apply YaRN mscale if applicable
+        if self.rope_type == "yarn" and hasattr(self, 'yarn_mscale'):
+            mscale = yarn_get_mscale(self.yarn_factor, self.yarn_mscale)
+            mscale_all_dim = yarn_get_mscale(self.yarn_factor, self.yarn_mscale_all_dim)
+            if mscale_all_dim > 0:
+                _mscale = mscale / mscale_all_dim
+            else:
+                _mscale = mscale
+            cos = cos * _mscale
+            sin = sin * _mscale
+        
+        self.register_buffer('cos_cached', cos, persistent=False)
+        self.register_buffer('sin_cached', sin, persistent=False)
         self.max_seq_len = seq_len
     
     def forward(self, q: torch.Tensor, k: torch.Tensor, position_ids: Optional[torch.Tensor] = None) -> tuple:
@@ -224,6 +354,10 @@ class Model(nn.Module):
                 cos = cos.unsqueeze(2)  # (batch, seq, 1, head_dim)
                 sin = sin.unsqueeze(2)
         
+        # Convert cos/sin to input dtype to preserve precision
+        cos = cos.to(q.dtype)
+        sin = sin.to(q.dtype)
+        
         q_rotated = self._apply_rotary(q, cos, sin)
         k_rotated = self._apply_rotary(k, cos, sin)
         
@@ -231,6 +365,12 @@ class Model(nn.Module):
     
     def _apply_rotary(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         """Apply rotary embedding to a single tensor."""
+        # Apply interleaving transformation if needed (used by DeepSeek)
+        # This transforms [x0, x1, x2, x3, ...] to [x0, x2, ..., x1, x3, ...]
+        if self.interleaved:
+            d = x.shape[-1]
+            x = x.view(*x.shape[:-1], d // 2, 2).transpose(-1, -2).reshape(*x.shape[:-1], d)
+        
         # Split into two halves
         x1 = x[..., :self.head_dim // 2]
         x2 = x[..., self.head_dim // 2:]
