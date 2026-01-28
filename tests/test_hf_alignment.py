@@ -1,17 +1,26 @@
 """
-Test Llama-3.1 alignment with HuggingFace transformers library.
+Test model alignment with HuggingFace transformers library.
 
-This test validates that the KernelBench Llama-3.1 implementation produces
+This test validates that KernelBench model implementations produce
 outputs matching the HuggingFace transformers implementation using:
 1. A batch of 5 prompts with varying lengths
 2. Continuous batching with paged KV cache
 3. Both prefill and decode phases
 
-Tests against:
-- meta-llama/Llama-3.1-8B-Instruct
-- meta-llama/Llama-3.1-70B-Instruct (optional, requires more memory)
+Supports any model with a corresponding KernelBench level4 implementation.
+Pass the model name via --model-name parameter.
+Optionally limit the number of layers with --max-layers for faster testing
+or to fit larger models on smaller GPUs.
 
-Requires HuggingFace authentication with access to Llama models.
+Usage:
+    pytest tests/test_hf_alignment.py --model-name meta-llama/Llama-3.1-8B-Instruct
+    pytest tests/test_hf_alignment.py --model-name meta-llama/Llama-3.1-70B-Instruct
+    pytest tests/test_hf_alignment.py --model-name mistralai/Mistral-7B-v0.1
+    
+    # Use only first 4 layers for faster testing:
+    pytest tests/test_hf_alignment.py --model-name meta-llama/Llama-3.1-70B-Instruct --max-layers 4
+
+Requires HuggingFace authentication with access to the specified model.
 """
 
 import pytest
@@ -19,7 +28,7 @@ import torch
 import sys
 import os
 import importlib
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 # Set up HuggingFace environment
 os.environ["HF_HOME"] = "/home/yak/data-fast/huggingface"
@@ -43,9 +52,80 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
 
-# Models to test
-MODEL_8B = "meta-llama/Llama-3.1-8B-Instruct"
-MODEL_70B = "meta-llama/Llama-3.1-70B-Instruct"
+# Default model for testing
+DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+
+# ============================================================================
+# Model to KernelBench Implementation Mapping
+# ============================================================================
+# Maps HuggingFace model name patterns to their corresponding level4 module names.
+# Multiple HF models can map to the same implementation (e.g., 8B and 70B variants).
+
+MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
+    # Llama 3.1 variants
+    "meta-llama/Llama-3.1-8B": "KernelBench.level4.1_Llama31",
+    "meta-llama/Llama-3.1-8B-Instruct": "KernelBench.level4.1_Llama31",
+    "meta-llama/Llama-3.1-70B": "KernelBench.level4.1_Llama31",
+    "meta-llama/Llama-3.1-70B-Instruct": "KernelBench.level4.1_Llama31",
+    "meta-llama/Llama-3.1-405B": "KernelBench.level4.1_Llama31",
+    "meta-llama/Llama-3.1-405B-Instruct": "KernelBench.level4.1_Llama31",
+    # Falcon variants
+    "tiiuae/falcon-7b": "KernelBench.level4.2_Falcon",
+    "tiiuae/falcon-7b-instruct": "KernelBench.level4.2_Falcon",
+    "tiiuae/falcon-40b": "KernelBench.level4.2_Falcon",
+    "tiiuae/falcon-40b-instruct": "KernelBench.level4.2_Falcon",
+    # Mistral variants
+    "mistralai/Mistral-7B-v0.1": "KernelBench.level4.3_Mistral",
+    "mistralai/Mistral-7B-Instruct-v0.1": "KernelBench.level4.3_Mistral",
+    "mistralai/Mistral-7B-Instruct-v0.2": "KernelBench.level4.3_Mistral",
+    # Mixtral (MoE)
+    "mistralai/Mixtral-8x7B-v0.1": "KernelBench.level4.4_MoE",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": "KernelBench.level4.4_MoE",
+    # T5 variants
+    "google-t5/t5-small": "KernelBench.level4.9_T5",
+    "google-t5/t5-base": "KernelBench.level4.9_T5",
+    "google-t5/t5-large": "KernelBench.level4.9_T5",
+    "google/flan-t5-small": "KernelBench.level4.9_T5",
+    "google/flan-t5-base": "KernelBench.level4.9_T5",
+    "google/flan-t5-large": "KernelBench.level4.9_T5",
+    # Qwen2-VL
+    "Qwen/Qwen2-VL-2B-Instruct": "KernelBench.level4.11_Qwen2VL",
+    "Qwen/Qwen2-VL-7B-Instruct": "KernelBench.level4.11_Qwen2VL",
+    # Whisper
+    "openai/whisper-tiny": "KernelBench.level4.12_Whisper",
+    "openai/whisper-small": "KernelBench.level4.12_Whisper",
+    "openai/whisper-base": "KernelBench.level4.12_Whisper",
+    "openai/whisper-medium": "KernelBench.level4.12_Whisper",
+    "openai/whisper-large-v3": "KernelBench.level4.12_Whisper",
+}
+
+
+def get_implementation_module(model_name: str) -> str:
+    """
+    Get the KernelBench implementation module for a given HuggingFace model name.
+    
+    Args:
+        model_name: HuggingFace model name (e.g., "meta-llama/Llama-3.1-8B-Instruct")
+        
+    Returns:
+        Module path (e.g., "KernelBench.level4.1_Llama31")
+        
+    Raises:
+        ValueError: If no implementation is found for the model
+    """
+    # Direct lookup
+    if model_name in MODEL_TO_IMPLEMENTATION:
+        return MODEL_TO_IMPLEMENTATION[model_name]
+    
+    # Try prefix matching for model families
+    for pattern, module in MODEL_TO_IMPLEMENTATION.items():
+        if model_name.startswith(pattern.rsplit("-", 1)[0]):
+            return module
+    
+    raise ValueError(
+        f"No KernelBench implementation found for model '{model_name}'. "
+        f"Available models: {list(MODEL_TO_IMPLEMENTATION.keys())}"
+    )
 
 # Test prompts with varying lengths - realistic instruction-following prompts
 TEST_PROMPTS = [
@@ -95,10 +175,20 @@ MAX_LOGIT_DIFF_WARN = 0.5  # Warn if logit diff exceeds this
 TOP_K_MATCH = 5  # Consider pass if top prediction is in top-K of other model
 
 
-def load_kernelbench_model(config_dict: dict):
-    """Load the KernelBench Llama model."""
-    llama_module = importlib.import_module('KernelBench.level4.1_Llama31')
-    return llama_module.Model(**config_dict), llama_module
+def load_kernelbench_model(model_name: str, config_dict: dict):
+    """
+    Load the KernelBench model corresponding to the HuggingFace model name.
+    
+    Args:
+        model_name: HuggingFace model name (e.g., "meta-llama/Llama-3.1-8B-Instruct")
+        config_dict: Model configuration dictionary
+        
+    Returns:
+        Tuple of (model instance, module)
+    """
+    module_path = get_implementation_module(model_name)
+    kb_module = importlib.import_module(module_path)
+    return kb_module.Model(**config_dict), kb_module
 
 
 def copy_weights(hf_model, kb_model, num_layers: int) -> None:
@@ -153,8 +243,16 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     }
 
 
-def load_models(model_name: str):
-    """Load HuggingFace and KernelBench models."""
+def load_models(model_name: str, max_layers: Optional[int] = None):
+    """
+    Load HuggingFace and KernelBench models.
+    
+    Args:
+        model_name: HuggingFace model name
+        max_layers: Number of layers to use. If None, uses all layers.
+                   If less than total layers, modifies config before loading
+                   to avoid loading unnecessary weights into memory.
+    """
     print(f"\nLoading models from {model_name}...")
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -162,10 +260,29 @@ def load_models(model_name: str):
         tokenizer.pad_token = tokenizer.eos_token
         
     hf_config = AutoConfig.from_pretrained(model_name)
+    total_layers = hf_config.num_hidden_layers
+    
+    # Determine actual number of layers to use
+    if max_layers is None:
+        num_layers = total_layers
+    else:
+        num_layers = min(max_layers, total_layers)
+    
+    truncated = num_layers < total_layers
+    
+    # If truncating, modify config BEFORE loading to save memory
+    # This way HuggingFace won't load weights for layers we don't need
+    if truncated:
+        print(f"Configuring model with {num_layers}/{total_layers} layers to save memory...")
+        hf_config.num_hidden_layers = num_layers
+    
     # Use eager attention to match our manual attention implementation
     # SDPA uses fused CUDA kernels with slightly different numerics
     hf_model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=DTYPE, device_map=DEVICE,
+        model_name, 
+        config=hf_config,  # Use modified config
+        torch_dtype=DTYPE, 
+        device_map=DEVICE,
         attn_implementation="eager",
     )
     hf_model.eval()
@@ -173,45 +290,71 @@ def load_models(model_name: str):
     # Calculate num_blocks needed for testing
     max_seq_len = 4096  # Maximum sequence length for tests
     block_size = 16
-    num_blocks = (max_seq_len // block_size + 1) * hf_config.num_hidden_layers * 2
+    # Use num_layers for block calculation
+    num_blocks = (max_seq_len // block_size + 1) * num_layers * 2
     
+    # Create KB config with the number of layers we're using
+    # Reset hf_config.num_hidden_layers for kb_config creation, then override
+    original_num_layers = total_layers
     kb_config = create_kb_model_from_hf_config(hf_config, num_blocks)
+    kb_config['num_layers'] = num_layers  # Ensure correct layer count
     
-    kb_model, llama_module = load_kernelbench_model(kb_config)
+    kb_model, kb_module = load_kernelbench_model(model_name, kb_config)
     kb_model = kb_model.to(device=DEVICE, dtype=DTYPE)
-    copy_weights(hf_model, kb_model, kb_config['num_layers'])
+    
+    # Copy weights for the layers we loaded
+    copy_weights(hf_model, kb_model, num_layers)
     kb_model.eval()
     
-    print(f"Loaded: {kb_config['num_layers']} layers, {kb_config['hidden_size']} hidden, "
+    print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
           f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
     
-    return hf_model, kb_model, tokenizer, kb_config, llama_module
+    return hf_model, kb_model, tokenizer, kb_config, kb_module
 
 
 # ============================================================================
-# Llama-3.1-8B Tests
+# Model Fixture (uses --model-name parameter)
 # ============================================================================
 
 @pytest.fixture(scope="module")
-def llama_8b_models():
-    """Load Llama-3.1-8B-Instruct models."""
+def loaded_models(request):
+    """
+    Load models based on command-line parameters.
+    
+    This fixture loads both the HuggingFace model and the corresponding
+    KernelBench implementation for comparison testing.
+    
+    Parameters used:
+        --model-name: HuggingFace model name
+        --max-layers: Number of layers to use (optional, defaults to all)
+    """
+    model_name = request.config.getoption("--model-name")
+    max_layers = request.config.getoption("--max-layers")
     try:
-        return load_models(MODEL_8B)
+        return load_models(model_name, max_layers), model_name, max_layers
+    except ValueError as e:
+        pytest.skip(str(e))
     except Exception as e:
-        pytest.skip(f"Could not load {MODEL_8B}: {e}")
+        pytest.skip(f"Could not load {model_name}: {e}")
 
+
+# ============================================================================
+# Alignment Tests
+# ============================================================================
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-def test_llama31_8b_prefill_alignment(llama_8b_models):
+def test_prefill_alignment(loaded_models):
     """
-    Test prefill (prompt processing) alignment for Llama-3.1-8B.
+    Test prefill (prompt processing) alignment.
     
     Uses generate(max_new_tokens=0, return_logits=True) to get prefill logits.
+    Compares HuggingFace and KernelBench outputs to ensure numerical alignment.
     """
-    hf_model, kb_model, tokenizer, kb_config, llama_module = llama_8b_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module), model_name, max_layers = loaded_models
     
+    layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
-    print("Testing Llama-3.1-8B Prefill Alignment")
+    print(f"Testing Prefill Alignment for {model_name}{layers_info}")
     print("="*70)
     
     for i, prompt in enumerate(TEST_PROMPTS):
@@ -265,20 +408,22 @@ def test_llama31_8b_prefill_alignment(llama_8b_models):
         assert max_diff < ATOL, f"Prefill diff {max_diff} exceeds tolerance {ATOL}"
     
     print("\n" + "-"*70)
-    print("All Llama-3.1-8B prefill tests passed!")
+    print(f"All prefill tests passed for {model_name}!")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-def test_llama31_8b_generation(llama_8b_models):
+def test_generation(loaded_models):
     """
-    Test continuous batching generation for Llama-3.1-8B.
+    Test continuous batching generation.
     
     Uses generate() for KernelBench model and compares with HuggingFace generation.
+    Validates that both implementations produce matching token sequences.
     """
-    hf_model, kb_model, tokenizer, kb_config, llama_module = llama_8b_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module), model_name, max_layers = loaded_models
     
+    layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
-    print("Testing Llama-3.1-8B Continuous Batching Generation")
+    print(f"Testing Continuous Batching Generation for {model_name}{layers_info}")
     print("="*70)
     
     results = []
@@ -363,12 +508,18 @@ def test_llama31_8b_generation(llama_8b_models):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-def test_llama31_8b_components(llama_8b_models):
-    """Test individual component alignment for Llama-3.1-8B."""
-    hf_model, kb_model, tokenizer, kb_config, _ = llama_8b_models
+def test_components(loaded_models):
+    """
+    Test individual component alignment.
     
+    Validates that individual model components (embeddings, layer norms, MLP, LM head)
+    produce matching outputs between HuggingFace and KernelBench implementations.
+    """
+    (hf_model, kb_model, tokenizer, kb_config, _), model_name, max_layers = loaded_models
+    
+    layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
-    print("Testing Llama-3.1-8B Component Alignment")
+    print(f"Testing Component Alignment for {model_name}{layers_info}")
     print("="*70)
     
     # Test embeddings
@@ -412,74 +563,6 @@ def test_llama31_8b_components(llama_8b_models):
     print("\n  All component tests passed!")
 
 
-# ============================================================================
-# Llama-3.1-70B Tests (Optional - requires significant memory)
-# ============================================================================
-
-@pytest.fixture(scope="module")
-def llama_70b_models():
-    """Load Llama-3.1-70B-Instruct models."""
-    try:
-        return load_models(MODEL_70B)
-    except Exception as e:
-        pytest.skip(f"Could not load {MODEL_70B}: {e}")
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-@pytest.mark.slow  # Mark as slow test
-def test_llama31_70b_prefill_alignment(llama_70b_models):
-    """
-    Test prefill alignment for Llama-3.1-70B.
-    
-    This test requires significant GPU memory (>80GB recommended).
-    Uses generate(max_new_tokens=0, return_logits=True) to get prefill logits.
-    """
-    hf_model, kb_model, tokenizer, kb_config, llama_module = llama_70b_models
-    
-    print("\n" + "="*70)
-    print("Testing Llama-3.1-70B Prefill Alignment")
-    print("="*70)
-    
-    # Use only first 2 prompts to save memory
-    for i, prompt in enumerate(TEST_PROMPTS[:2]):
-        encoded = tokenizer(prompt, return_tensors="pt").to(DEVICE)
-        input_ids = encoded['input_ids']
-        batch_size, seq_len = input_ids.shape
-        
-        max_blocks = (seq_len + kb_config['block_size'] - 1) // kb_config['block_size'] + 10
-        block_table = torch.arange(max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0)
-        
-        with torch.no_grad():
-            hf_out = hf_model(input_ids=input_ids, use_cache=False)
-            hf_logits = hf_out.logits
-            
-            # KernelBench prefill using generate with max_new_tokens=0
-            _, kb_logits_list = kb_model.generate(
-                input_ids,
-                max_new_tokens=0,
-                block_table=block_table,
-                return_logits=True
-            )
-            kb_logits = kb_logits_list[0]  # Prefill logits
-        
-        hf_last = hf_logits[:, -1, :]
-        kb_last = kb_logits[:, -1, :]
-        
-        diff = (hf_last - kb_last).abs()
-        max_diff = diff.max().item()
-        
-        hf_top = hf_last.argmax(dim=-1).item()
-        kb_top = kb_last.argmax(dim=-1).item()
-        
-        status = "PASS" if max_diff < ATOL else "FAIL"
-        print(f"\n  [{i}] {status}: '{prompt[:50]}...' (len={seq_len})")
-        print(f"      max_diff={max_diff:.2e}")
-        print(f"      HF: {tokenizer.decode([hf_top])} | KB: {tokenizer.decode([kb_top])}")
-        
-        assert max_diff < ATOL
-    
-    print("\n  Llama-3.1-70B prefill tests passed!")
-
-
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
+    # Forward command-line arguments to pytest
+    pytest.main([__file__, "-v", "-s"] + sys.argv[1:])
