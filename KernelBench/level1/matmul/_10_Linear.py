@@ -55,10 +55,8 @@ class Model(nn.Module):
         Returns:
             Output tensor of shape (*, out_features)
         """
-        output = torch.matmul(x, self.weight.t())
-        if self.bias is not None:
-            output = output + self.bias
-        return output
+        # Use F.linear for numerical consistency with PyTorch's nn.Linear
+        return torch.nn.functional.linear(x, self.weight, self.bias)
 
 
 PARAMETERS = [

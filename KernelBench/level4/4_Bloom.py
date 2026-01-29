@@ -101,7 +101,7 @@ class BloomAttention(nn.Module):
     BLOOM-style attention block with ALiBi and per-layer paged KV cache.
 
     Uses:
-    - Linear for Q/K/V/O projections (with bias)
+    - Fused QKV projection (matching HuggingFace structure)
     - ALiBi for position encoding (no RoPE)
     - Paged KV cache for efficient memory management
     """
@@ -127,11 +127,10 @@ class BloomAttention(nn.Module):
 
         self.scale = 1.0 / math.sqrt(self.head_dim)
 
-        # Q/K/V/O projections (BLOOM uses bias)
-        self.q_proj = Linear(hidden_size, num_heads * head_dim, bias=True)
-        self.k_proj = Linear(hidden_size, num_heads * head_dim, bias=True)
-        self.v_proj = Linear(hidden_size, num_heads * head_dim, bias=True)
-        self.o_proj = Linear(num_heads * head_dim, hidden_size, bias=True)
+        # Fused QKV projection (matches HuggingFace BLOOM structure)
+        self.query_key_value = Linear(hidden_size, 3 * num_heads * head_dim, bias=True)
+        # Output projection (named 'dense' to match HuggingFace)
+        self.dense = Linear(num_heads * head_dim, hidden_size, bias=True)
 
         # ALiBi slopes
         slopes = get_alibi_slopes(num_heads)
@@ -215,51 +214,65 @@ class BloomAttention(nn.Module):
 
         return k_cache, v_cache
 
-    def _compute_alibi_bias(self, query_positions: torch.Tensor,
-                            key_positions: torch.Tensor,
-                            device: torch.device) -> torch.Tensor:
+    def _build_alibi_tensor(self, seq_len: int, batch_size: int,
+                             device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         """
-        Compute ALiBi bias for attention scores.
-
-        Args:
-            query_positions: (batch_size, seq_len) absolute positions of queries
-            key_positions: (1, total_len) positions of keys
-
+        Build ALiBi tensor matching HuggingFace's implementation.
+        
         Returns:
-            alibi: (batch_size, num_heads, seq_len, total_len)
+            alibi: (batch_size * num_heads, 1, seq_len) - added to attention scores
         """
-        # Distance matrix: query_pos - key_pos (negative for causal attention)
-        distance = query_positions.unsqueeze(-1) - key_positions.unsqueeze(1)
-        # Apply slopes: (1, num_heads, 1, 1) * (batch, 1, seq, total)
-        alibi = self.alibi_slopes.to(device).view(1, self.num_heads, 1, 1) * distance.unsqueeze(1)
+        # Positions: [0, 1, 2, ..., seq_len-1]
+        arange_tensor = torch.arange(seq_len, device=device, dtype=dtype).unsqueeze(0)
+        # Apply slopes: (num_heads, 1) * (1, seq_len) -> (num_heads, seq_len)
+        alibi = self.alibi_slopes.to(device=device, dtype=dtype).unsqueeze(1) * arange_tensor
+        # Expand for batch and reshape: (batch * num_heads, 1, seq_len)
+        alibi = alibi.unsqueeze(0).expand(batch_size, -1, -1)
+        alibi = alibi.reshape(batch_size * self.num_heads, 1, seq_len)
         return alibi
 
     def _prefill_attention(self, q: torch.Tensor, k: torch.Tensor,
                            v: torch.Tensor) -> torch.Tensor:
         """
         Compute attention during prefill phase (no cache read needed).
+        Matches HuggingFace BLOOM's attention implementation.
         """
         batch_size, num_heads, seq_len, head_dim = q.shape
         device = q.device
+        dtype = q.dtype
 
-        # Compute attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        # Reshape for batched matmul: (batch * heads, seq, head_dim)
+        q_reshaped = q.reshape(batch_size * num_heads, seq_len, head_dim)
+        k_reshaped = k.reshape(batch_size * num_heads, seq_len, head_dim).transpose(-1, -2)
+        v_reshaped = v.reshape(batch_size * num_heads, seq_len, head_dim)
 
-        # Compute ALiBi bias
-        query_positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
-        key_positions = torch.arange(seq_len, device=device).unsqueeze(0)
-        alibi_bias = self._compute_alibi_bias(query_positions, key_positions, device)
-        scores = scores + alibi_bias
+        # Build ALiBi tensor: (batch * heads, 1, seq_len)
+        alibi = self._build_alibi_tensor(seq_len, batch_size, device, dtype)
 
-        # Causal mask for prefill
+        # Compute attention scores with ALiBi: alibi + scale * (q @ k.T)
+        # Using baddbmm pattern: beta * alibi + alpha * (q @ k.T)
+        scores = torch.baddbmm(
+            alibi,
+            q_reshaped,
+            k_reshaped,
+            beta=1.0,
+            alpha=self.scale,
+        )
+        # scores shape: (batch * heads, seq, seq)
+
+        # Apply causal mask
         causal_mask = torch.triu(
             torch.ones(seq_len, seq_len, dtype=torch.bool, device=device),
             diagonal=1
         )
-        scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+        scores = scores.masked_fill(causal_mask.unsqueeze(0), float('-inf'))
 
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
+        # Softmax and value projection
+        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(dtype)
+        attn_output = torch.bmm(attn_weights, v_reshaped)
+
+        # Reshape back: (batch, heads, seq, head_dim)
+        attn_output = attn_output.view(batch_size, num_heads, seq_len, head_dim)
         return attn_output
 
     def _decode_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -267,9 +280,11 @@ class BloomAttention(nn.Module):
                           context_lens: torch.Tensor) -> torch.Tensor:
         """
         Compute attention during decode phase (with cache read).
+        Matches HuggingFace BLOOM's attention implementation.
         """
         batch_size, num_heads, seq_len, head_dim = q.shape
         device = q.device
+        dtype = q.dtype
 
         max_context_len = context_lens.max().item()
 
@@ -287,17 +302,32 @@ class BloomAttention(nn.Module):
 
         total_len = k_full.shape[2]
 
-        # Compute attention scores
-        scores = torch.matmul(q, k_full.transpose(-2, -1)) * self.scale
+        # Reshape for batched matmul: (batch * heads, seq, head_dim)
+        q_reshaped = q.reshape(batch_size * num_heads, seq_len, head_dim)
+        k_reshaped = k_full.reshape(batch_size * num_heads, total_len, head_dim).transpose(-1, -2)
+        v_reshaped = v_full.reshape(batch_size * num_heads, total_len, head_dim)
 
-        # Compute ALiBi bias
-        query_positions = torch.arange(seq_len, device=device).unsqueeze(0) + context_lens.unsqueeze(1)
-        key_positions = torch.arange(total_len, device=device).unsqueeze(0)
-        alibi_bias = self._compute_alibi_bias(query_positions, key_positions, device)
-        scores = scores + alibi_bias
+        # Build ALiBi tensor for full sequence: (batch * heads, 1, total_len)
+        alibi = self._build_alibi_tensor(total_len, batch_size, device, dtype)
 
-        # Causal mask: can't attend to future positions
-        causal_mask = key_positions > query_positions.unsqueeze(-1)
+        # Compute attention scores with ALiBi: alibi + scale * (q @ k.T)
+        scores = torch.baddbmm(
+            alibi,
+            q_reshaped,
+            k_reshaped,
+            beta=1.0,
+            alpha=self.scale,
+        )
+        # scores shape: (batch * heads, seq_len, total_len)
+
+        # Reshape for mask application: (batch, heads, seq_len, total_len)
+        scores = scores.view(batch_size, num_heads, seq_len, total_len)
+
+        # Causal mask: query at position i can only attend to keys at positions <= i
+        # Query positions are context_lens, context_lens+1, ..., context_lens+seq_len-1
+        query_positions = context_lens.view(batch_size, 1, 1) + torch.arange(seq_len, device=device).view(1, seq_len, 1)
+        key_positions = torch.arange(total_len, device=device).view(1, 1, total_len)
+        causal_mask = key_positions > query_positions  # (batch, seq_len, total_len)
 
         # Padding mask for cached K/V
         if max_context_len > 0:
@@ -307,17 +337,21 @@ class BloomAttention(nn.Module):
                 padding_mask,
                 torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
             ], dim=1)
-            padding_mask = padding_mask.unsqueeze(1).unsqueeze(1)
         else:
-            padding_mask = torch.zeros(batch_size, 1, 1, total_len, dtype=torch.bool, device=device)
+            padding_mask = torch.zeros(batch_size, total_len, dtype=torch.bool, device=device)
 
-        # Combine masks
-        causal_mask = causal_mask.unsqueeze(1)
-        attn_mask = causal_mask | padding_mask
+        # Combine masks: (batch, 1, seq_len, total_len)
+        attn_mask = causal_mask | padding_mask.unsqueeze(1)
+        attn_mask = attn_mask.unsqueeze(1)  # (batch, 1, seq_len, total_len)
         scores = scores.masked_fill(attn_mask, float('-inf'))
 
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_output = torch.matmul(attn_weights, v_full)
+        # Reshape back and apply softmax
+        scores = scores.view(batch_size * num_heads, seq_len, total_len)
+        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(dtype)
+        attn_output = torch.bmm(attn_weights, v_reshaped)
+
+        # Reshape back: (batch, heads, seq, head_dim)
+        attn_output = attn_output.view(batch_size, num_heads, seq_len, head_dim)
         return attn_output
 
     def forward(
@@ -343,10 +377,16 @@ class BloomAttention(nn.Module):
         if self.alibi_slopes.device != x.device:
             self.alibi_slopes = self.alibi_slopes.to(device=x.device)
 
-        # Q/K/V projections
-        q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        # Fused QKV projection
+        qkv = self.query_key_value(x)
+        
+        # Split into Q, K, V using HuggingFace's interleaved format:
+        # fused_qkv is (batch, seq, num_heads * 3 * head_dim)
+        # Reshape to (batch, seq, num_heads, 3, head_dim) where dim 3 indexes Q/K/V per head
+        qkv = qkv.view(batch_size, seq_len, self.num_heads, 3, self.head_dim)
+        q = qkv[..., 0, :].transpose(1, 2)  # (batch, heads, seq, head_dim)
+        k = qkv[..., 1, :].transpose(1, 2)
+        v = qkv[..., 2, :].transpose(1, 2)
 
         # Write new K,V to cache
         self._write_to_cache(k, v, attn_metadata.slot_mapping)
@@ -363,17 +403,18 @@ class BloomAttention(nn.Module):
 
         # Reshape and apply output projection
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
-        return self.o_proj(attn_output)
+        return self.dense(attn_output)
 
 
 class BloomMLP(nn.Module):
-    """BLOOM MLP using level1 operators (GELU activation)."""
+    """BLOOM MLP using level1 operators (GELU activation with BLOOM's exact formula)."""
 
     def __init__(self, hidden_size: int, intermediate_size: int):
         super().__init__()
         self.dense_h_to_4h = Linear(hidden_size, intermediate_size, bias=True)
         self.dense_4h_to_h = Linear(intermediate_size, hidden_size, bias=True)
-        self.gelu = GELU()
+        # Use HuggingFace BLOOM's exact GELU formula for perfect alignment
+        self.gelu = GELU(approximate='tanh')
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.dense_h_to_4h(x)
@@ -514,7 +555,8 @@ class Model(nn.Module):
         self.word_embeddings_layernorm = LayerNorm(hidden_size, eps=layer_norm_eps)
 
         # Decoder layers - each with its own KV cache
-        self.layers = nn.ModuleList([
+        # Named 'h' to match HuggingFace BLOOM structure
+        self.h = nn.ModuleList([
             BloomDecoderLayer(
                 hidden_size=hidden_size,
                 num_heads=num_heads,
@@ -560,7 +602,7 @@ class Model(nn.Module):
         x = self.word_embeddings_layernorm(x)
 
         # All layers share the same block_table but each has its own cache
-        for layer in self.layers:
+        for layer in self.h:
             x = layer(x, attn_metadata)
 
         x = self.ln_f(x)
@@ -569,7 +611,7 @@ class Model(nn.Module):
 
     def reset_cache(self):
         """Reset all layer KV caches."""
-        for layer in self.layers:
+        for layer in self.h:
             layer.reset_cache()
 
     def _prefill(
