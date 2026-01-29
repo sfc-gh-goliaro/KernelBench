@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -104,38 +102,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Swin-v2-Tiny high-resolution processing (512x512, 64x64 windows)
-    {"batch_size": 4, "num_windows": 4096, "window_size": 8, "num_heads": 3, "head_dim": 32},
-    # Swin-v2-Base large batch image classification (384x384)
-    {"batch_size": 16, "num_windows": 1024, "window_size": 12, "num_heads": 4, "head_dim": 32},
-    # Swin-v2-Tiny streaming inference (224x224)
-    {"batch_size": 64, "num_windows": 1024, "window_size": 7, "num_heads": 4, "head_dim": 24},
-    # Swin-v2-Base video frame processing (256x256)
-    {"batch_size": 32, "num_windows": 1024, "window_size": 8, "num_heads": 4, "head_dim": 32},
-    # Swin-v2-Large high-quality image processing (384x384)
-    {"batch_size": 2, "num_windows": 1024, "window_size": 12, "num_heads": 6, "head_dim": 32},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "8_ShiftedWindowAttention")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    B_windows = p["batch_size"] * p["num_windows"]
-    seq_len = p["window_size"] * p["window_size"]
-    # Pre-projected Q, K, V tensors in window format
-    q = DISTRIBUTIONS[dist_name]((B_windows, p["num_heads"], seq_len, p["head_dim"]), dtype=dtype, device=device)
-    k = DISTRIBUTIONS[dist_name]((B_windows, p["num_heads"], seq_len, p["head_dim"]), dtype=dtype, device=device)
-    v = DISTRIBUTIONS[dist_name]((B_windows, p["num_heads"], seq_len, p["head_dim"]), dtype=dtype, device=device)
-    # Optional attention mask for shifted windows
-    attn_mask = torch.zeros((p["num_windows"], seq_len, seq_len), dtype=dtype, device=device)
-    return [q, k, v, attn_mask]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    dim = p["num_heads"] * p["head_dim"]
-    return [dim, p["window_size"], p["num_heads"]]

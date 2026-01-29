@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -104,27 +102,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 4096, "group_size": 128},
-    # Llama-3.1-8B-AWQ: FFN up-projection with activation-aware scaling
-    {"batch_size": 4, "seq_length": 4096, "in_features": 4096, "out_features": 14336, "group_size": 128},
-    # Mistral-7B-AWQ: vLLM serving configuration
-    {"batch_size": 32, "seq_length": 512, "in_features": 4096, "out_features": 14336, "group_size": 64},
-    # Qwen-2.5-72B-AWQ: Large model deployment
-    {"batch_size": 2, "seq_length": 8192, "in_features": 8192, "out_features": 29568, "group_size": 128},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "5_AWQQuantize")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["in_features"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_features"], p["out_features"], p["group_size"]]

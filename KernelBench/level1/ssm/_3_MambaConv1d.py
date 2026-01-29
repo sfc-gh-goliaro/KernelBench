@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -73,27 +71,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "d_inner": 4096, "kernel_size": 4},
-    # Mamba-2-1.3B: d_model=2048, expand=2, d_inner=4096
-    {"batch_size": 8, "seq_length": 4096, "d_inner": 4096, "kernel_size": 4},
-    # Mamba-2-2.7B: d_model=2560, expand=2, d_inner=5120
-    {"batch_size": 8, "seq_length": 2048, "d_inner": 5120, "kernel_size": 4},
-    # Mamba-370M: d_model=1024, expand=2, d_inner=2048
-    {"batch_size": 16, "seq_length": 2048, "d_inner": 2048, "kernel_size": 4},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "3_MambaConv1d")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["d_inner"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["d_inner"], p["kernel_size"]]

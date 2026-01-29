@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -107,27 +105,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 16, "seq_len": 128, "hidden_size": 256, "pitch_embedding_dim": 256},
-    # FastPitch: Parallel text-to-speech with pitch prediction
-    {"batch_size": 8, "seq_len": 200, "hidden_size": 384, "pitch_embedding_dim": 384},
-    # PortaSpeech: Portable and expressive TTS
-    {"batch_size": 32, "seq_len": 64, "hidden_size": 192, "pitch_embedding_dim": 128},
-    # VITS: End-to-end text-to-speech with adversarial learning
-    {"batch_size": 4, "seq_len": 300, "hidden_size": 512, "pitch_embedding_dim": 512},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "4_PitchPredictor")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    hidden_states = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["hidden_size"]), dtype=dtype, device=device)
-    return [hidden_states]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"]]

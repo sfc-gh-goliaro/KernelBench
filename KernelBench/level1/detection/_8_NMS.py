@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torchvision.ops as ops
@@ -60,27 +58,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"num_boxes": 10000},
-    # YOLOv8-Nano: image 640x640, ~8400 anchors
-    {"num_boxes": 8400},
-    # YOLOv8-Medium: image 640x640, ~8400 anchors
-    {"num_boxes": 8400},
-    # YOLOv8-XLarge: image 640x640, ~8400 anchors with more detections
-    {"num_boxes": 25200},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "8_NMS")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    boxes = DISTRIBUTIONS[dist_name]((p["num_boxes"], 4), dtype=dtype, device=device)
-    scores = DISTRIBUTIONS[dist_name]((p["num_boxes"]), dtype=dtype, device=device)
-    return [boxes, scores]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [0.45, 0.25]

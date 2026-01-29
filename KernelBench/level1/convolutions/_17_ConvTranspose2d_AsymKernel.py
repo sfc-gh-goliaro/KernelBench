@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -36,26 +34,3 @@ class Model(nn.Module):
         return self.conv_transpose2d(x)
 
 # Test code
-
-PARAMETERS = [
-    {"batch_size": 8, "in_channels": 64, "out_channels": 64, "kernel_size": (3, 7), "width": 512, "height": 512},
-    # SDXL: VAE decoder asymmetric transpose conv
-    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": (3, 5), "width": 128, "height": 128},
-    # InceptionV3: asymmetric factorized transpose for upsampling
-    {"batch_size": 16, "in_channels": 192, "out_channels": 192, "kernel_size": (1, 7), "width": 35, "height": 35},
-    # PSPNet: pyramid pooling module upsampling
-    {"batch_size": 4, "in_channels": 256, "out_channels": 128, "kernel_size": (3, 5), "width": 256, "height": 256},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "17_ConvTranspose2d_AsymKernel")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["kernel_size"]]

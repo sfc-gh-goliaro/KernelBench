@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,28 +66,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "high_channels": 512, "low_channels": 256, "out_channels": 256},
-    # YOLOv5-s: FPN concat
-    {"batch_size": 16, "high_channels": 256, "low_channels": 128, "out_channels": 128},
-    # YOLOv5-l: FPN concat
-    {"batch_size": 8, "high_channels": 512, "low_channels": 256, "out_channels": 256},
-    # RetinaNet: FPN concat
-    {"batch_size": 4, "high_channels": 256, "low_channels": 256, "out_channels": 256},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "4_FPN_Concat")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    high = DISTRIBUTIONS[dist_name]((p["batch_size"], p["high_channels"], 20, 20), dtype=dtype, device=device)
-    low = DISTRIBUTIONS[dist_name]((p["batch_size"], p["low_channels"], 40, 40), dtype=dtype, device=device)
-    return [high, low]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["high_channels"], p["low_channels"], p["out_channels"]]

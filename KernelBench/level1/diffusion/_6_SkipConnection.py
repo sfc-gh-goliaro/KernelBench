@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -87,27 +85,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # SD1.5: mid-resolution skip (512x512 image, 32x32 latent)
-    {"batch_size": 4, "encoder_channels": 512, "decoder_channels": 512, "out_channels": 512, "height": 32, "width": 32},
-    # SD1.5: high-resolution skip (512x512 image, 64x64 latent)
-    {"batch_size": 8, "encoder_channels": 320, "decoder_channels": 320, "out_channels": 320, "height": 64, "width": 64},
-    # SDXL: bottleneck skip (1024x1024 image, 16x16 latent at bottleneck)
-    {"batch_size": 4, "encoder_channels": 1280, "decoder_channels": 1280, "out_channels": 1280, "height": 16, "width": 16},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "6_SkipConnection")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    encoder_features = DISTRIBUTIONS[dist_name]((p["batch_size"], p["encoder_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    decoder_features = DISTRIBUTIONS[dist_name]((p["batch_size"], p["decoder_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [encoder_features, decoder_features]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["encoder_channels"], p["decoder_channels"], p["out_channels"]]

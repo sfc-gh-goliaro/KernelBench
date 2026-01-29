@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -98,34 +96,6 @@ class Model(nn.Module):
         
         # Weight decay
         if self.weight_decay != 0:
-
-PARAMETERS = [
-    {"param_size": (4096, 4096)},
-    # T5-XXL training: encoder-decoder attention weight
-    {"param_size": (4096, 1024)},
-    # PaLM-540B training: memory-efficient MLP layer
-    {"param_size": (8192, 32768)},
-    # mT5-large training: cross-attention projection
-    {"param_size": (1024, 1024)},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "5_Adafactor")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    param = DISTRIBUTIONS[dist_name]((rows, cols), dtype=dtype, device=device)
-    grad = DISTRIBUTIONS[dist_name]((rows, cols), dtype=dtype, device=device)
-    exp_avg_sq_row = DISTRIBUTIONS[dist_name]((rows), dtype=dtype, device=device)
-    exp_avg_sq_col = DISTRIBUTIONS[dist_name]((cols), dtype=dtype, device=device)
-    return [param, grad, exp_avg_sq_row, exp_avg_sq_col, step]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return []
-        
-        return param, exp_avg_sq_row, exp_avg_sq_col
-
 
 # ============================================================================
 # Benchmark Configuration

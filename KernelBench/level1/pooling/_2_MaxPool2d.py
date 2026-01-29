@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -33,27 +31,3 @@ class Model(nn.Module):
             torch.Tensor: Output tensor after Max Pooling 2D, shape (batch_size, channels, pooled_height, pooled_width).
         """
         return self.maxpool(x)
-
-
-PARAMETERS = [
-    {"batch_size": 32, "channels": 64, "height": 512, "width": 512, "kernel_size": 4, "stride": 1, "padding": 1, "dilation": 1},
-    # EfficientNet-B0: after stem (32 channels, 112x112), kernel=3, stride=2
-    {"batch_size": 32, "channels": 32, "height": 112, "width": 112, "kernel_size": 3, "stride": 2, "padding": 1, "dilation": 1},
-    # EfficientNet-B7: after stem (64 channels, 300x300), kernel=3, stride=2
-    {"batch_size": 8, "channels": 64, "height": 300, "width": 300, "kernel_size": 3, "stride": 2, "padding": 1, "dilation": 1},
-    # ResNet-50: after conv1 (64 channels, 112x112), kernel=3, stride=2
-    {"batch_size": 32, "channels": 64, "height": 112, "width": 112, "kernel_size": 3, "stride": 2, "padding": 1, "dilation": 1},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "2_MaxPool2d")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["kernel_size"], p["stride"], p["padding"], p["dilation"]]

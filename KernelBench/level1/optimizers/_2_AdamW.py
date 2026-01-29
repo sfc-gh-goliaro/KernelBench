@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -74,29 +72,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"param_size": (4096, 4096)},
-    # Llama-3.1-8B training: AdamW step on MLP down-projection
-    {"param_size": (14336, 4096)},
-    # Mistral-7B training: attention QKV projection
-    {"param_size": (4096, 12288)},
-    # GPT-NeoX-20B training: output embedding layer
-    {"param_size": (50432, 6144)},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "2_AdamW")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    param = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    grad = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    m = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    v = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    return [param, grad, m, v, step]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [1e-3, (0.9, 0.999), 1e-8, 0.01]

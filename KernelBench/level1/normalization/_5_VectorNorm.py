@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -52,29 +50,3 @@ class Model(nn.Module):
             norm = torch.norm(x, p=self.p, dim=self.dim, keepdim=self.keepdim)
 
         return x / (norm + 1e-12)
-
-
-
-PARAMETERS = [
-    {"batch_size": 128, "features": 64, "dim1": 256, "dim2": 256},
-    # ResNet-50: L2 norm on feature maps before classification
-    {"batch_size": 32, "features": 2048, "dim1": 7, "dim2": 7},
-    # ResNet-101: L2 norm on feature maps
-    {"batch_size": 16, "features": 2048, "dim1": 7, "dim2": 7},
-    # CLIP ViT-L: image embeddings normalization (768 dim)
-    {"batch_size": 64, "features": 768, "dim1": 1, "dim2": 1},
-    # BGE-M3: embedding normalization (1024 dim)
-    {"batch_size": 32, "features": 1024, "dim1": 1, "dim2": 1},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("normalization", "5_VectorNorm")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["features"], p["dim1"], p["dim2"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [2.0, None, True]

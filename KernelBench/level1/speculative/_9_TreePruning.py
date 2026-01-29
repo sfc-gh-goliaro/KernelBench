@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -85,28 +83,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Sequoia optimal tree pruning (Llama-2-7B)
-    {"batch_size": 8, "num_nodes": 128, "max_nodes": 64},
-    # SpecInfer aggressive pruning (Llama-3.1-8B)
-    {"batch_size": 4, "num_nodes": 256, "max_nodes": 128},
-    # Optimal tree budget pruning (Mistral-7B)
-    {"batch_size": 16, "num_nodes": 64, "max_nodes": 32},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "9_TreePruning")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    node_probs = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_nodes"]), dtype=dtype, device=device)
-    parent_indices = DISTRIBUTIONS[dist_name]((p["num_nodes"]), dtype=dtype, device=device)
-    node_depths = DISTRIBUTIONS[dist_name]((p["num_nodes"]), dtype=dtype, device=device)
-    return [node_probs, parent_indices, node_depths]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["max_nodes"]]

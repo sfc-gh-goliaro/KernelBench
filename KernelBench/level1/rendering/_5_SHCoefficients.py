@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -113,27 +111,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 100000, "degree": 3, "num_coeffs": 16},
-    # 3DGS: Standard spherical harmonics for view-dependent color
-    {"batch_size": 200000, "degree": 3, "num_coeffs": 16},
-    # Plenoxels: Lower degree SH for faster rendering
-    {"batch_size": 500000, "degree": 2, "num_coeffs": 9},
-    # 3DGS-HD: High-fidelity with degree-4 harmonics
-    {"batch_size": 150000, "degree": 4, "num_coeffs": 25},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "5_SHCoefficients")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    sh_coeffs = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_coeffs"], 3), dtype=dtype, device=device)
-    return [sh_coeffs, directions]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["degree"]]

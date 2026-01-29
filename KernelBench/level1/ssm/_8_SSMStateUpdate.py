@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -81,31 +79,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "intermediate_size": 5120, "state_size": 16},
-    # Mamba-2-1.3B: d_model=2048, expand=2, d_state=128
-    {"batch_size": 32, "intermediate_size": 4096, "state_size": 128},
-    # Mamba-2-2.7B: d_model=2560, expand=2, d_state=128
-    {"batch_size": 32, "intermediate_size": 5120, "state_size": 128},
-    # RWKV-6-7B: d_model=4096, head_size=64, n_head=64
-    {"batch_size": 16, "intermediate_size": 4096, "state_size": 64},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "8_SSMStateUpdate")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["intermediate_size"]), dtype=dtype, device=device)
-    h = DISTRIBUTIONS[dist_name]((p["batch_size"], p["intermediate_size"], p["state_size"]), dtype=dtype, device=device)
-    dt = DISTRIBUTIONS[dist_name]((p["batch_size"], p["intermediate_size"]), dtype=dtype, device=device)
-    B = DISTRIBUTIONS[dist_name]((p["batch_size"], p["state_size"]), dtype=dtype, device=device)
-    C = DISTRIBUTIONS[dist_name]((p["batch_size"], p["state_size"]), dtype=dtype, device=device)
-    return [x, h, dt, B, C]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["intermediate_size"], p["state_size"]]

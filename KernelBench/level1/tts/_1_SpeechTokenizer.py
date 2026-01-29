@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -85,27 +83,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "time_frames": 500, "feature_dim": 512, "codebook_size": 1024, "num_codebooks": 8},
-    # VALL-E: Neural codec language model for TTS
-    {"batch_size": 4, "time_frames": 1000, "feature_dim": 256, "codebook_size": 2048, "num_codebooks": 4},
-    # SpeechGPT: Speech-enabled large language model
-    {"batch_size": 16, "time_frames": 250, "feature_dim": 768, "codebook_size": 512, "num_codebooks": 12},
-    # AudioLM: High-quality audio generation
-    {"batch_size": 2, "time_frames": 750, "feature_dim": 1024, "codebook_size": 4096, "num_codebooks": 8},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "1_SpeechTokenizer")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    audio_features = DISTRIBUTIONS[dist_name]((p["batch_size"], p["time_frames"], p["feature_dim"]), dtype=dtype, device=device)
-    return [audio_features]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["feature_dim"], p["codebook_size"], p["num_codebooks"]]

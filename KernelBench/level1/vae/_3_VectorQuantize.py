@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,28 +44,3 @@ class Model(nn.Module):
         loss = F.mse_loss(quantized.detach(), x) * self.commitment_cost
         
         return quantized, loss, indices.view(x.shape[:-1])
-
-
-
-PARAMETERS = [
-    {"batch_size": 8, "seq_len": 256, "embed_dim": 256, "num_embeddings": 8192},
-    # SDXL VQ-VAE: high-resolution image tokenization
-    {"batch_size": 1, "seq_len": 4096, "embed_dim": 256, "num_embeddings": 16384},
-    # SD3 VQ-VAE: multi-scale quantization
-    {"batch_size": 2, "seq_len": 1024, "embed_dim": 512, "num_embeddings": 8192},
-    # Muse VQ-GAN: discrete image tokenizer
-    {"batch_size": 4, "seq_len": 256, "embed_dim": 256, "num_embeddings": 8192},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "3_VectorQuantize")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["embed_dim"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_embeddings"], p["embed_dim"]]

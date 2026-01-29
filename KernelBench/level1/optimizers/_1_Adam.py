@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -68,29 +66,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"param_size": (4096, 4096)},
-    # Llama-3.1-8B training: MLP up-projection weight
-    {"param_size": (4096, 14336)},
-    # BERT-base finetuning: attention output projection
-    {"param_size": (768, 768)},
-    # GPT-2 medium training: embedding layer
-    {"param_size": (50257, 1024)},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("optimizers", "1_Adam")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    param = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    grad = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    m = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    v = DISTRIBUTIONS[dist_name]((*p["param_size"]), dtype=dtype, device=device)
-    return [param, grad, m, v, step]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [1e-3, (0.9, 0.999), 1e-8]

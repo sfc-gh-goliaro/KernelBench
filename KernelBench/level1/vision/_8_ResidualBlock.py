@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -82,27 +80,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "in_channels": 256, "out_channels": 256, "height": 28, "width": 28, "stride": 1, "downsample": False},
-    # ResNet-50 Stage 3: 512-channel block
-    {"batch_size": 32, "in_channels": 512, "out_channels": 512, "height": 14, "width": 14, "stride": 1, "downsample": False},
-    # ResNet-101 Stage 4: 1024-channel with downsampling
-    {"batch_size": 16, "in_channels": 1024, "out_channels": 1024, "height": 14, "width": 14, "stride": 2, "downsample": True},
-    # WideResNet-28-10: wide channels at Stage 2
-    {"batch_size": 64, "in_channels": 160, "out_channels": 320, "height": 16, "width": 16, "stride": 2, "downsample": True},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "8_ResidualBlock")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["stride"], p["downsample"]]

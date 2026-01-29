@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -87,30 +85,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Low-latency: Llama-3.1-8B deep Jacobi window (16 positions)
-    {"batch_size": 4, "n_positions": 16, "hidden_size": 4096, "vocab_size": 128256},
-    # Low-latency: Llama-3.1-70B extended consistency decoding (12 positions)
-    {"batch_size": 2, "n_positions": 12, "hidden_size": 8192, "vocab_size": 128256},
-    # High-throughput: Llama-2-7B batched Jacobi (8 positions, large batch)
-    {"batch_size": 64, "n_positions": 8, "hidden_size": 4096, "vocab_size": 32000},
-    # High-throughput: Vicuna-7B high-volume consistency (6 positions)
-    {"batch_size": 32, "n_positions": 6, "hidden_size": 4096, "vocab_size": 32000},
-    # Balanced: Llama-3.1-8B standard Jacobi
-    {"batch_size": 16, "n_positions": 10, "hidden_size": 4096, "vocab_size": 128256},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "6_JacobiIteration")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    hidden_states = DISTRIBUTIONS[dist_name]((p["batch_size"], p["n_positions"], p["hidden_size"]), dtype=dtype, device=device)
-    return [hidden_states, initial_tokens]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["vocab_size"]]

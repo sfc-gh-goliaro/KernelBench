@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -74,30 +72,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 64, "num_heads": 8, "window_size": 7},
-    # Swin-v2-Tiny: window_size=8, num_heads varies by stage
-    {"batch_size": 64, "num_heads": 3, "window_size": 8},
-    # Swin-v2-Base: window_size=12, stage 3 num_heads=16
-    {"batch_size": 32, "num_heads": 16, "window_size": 12},
-    # T5-Base: relative position bias in encoder, 12 heads
-    {"batch_size": 32, "num_heads": 12, "window_size": 32},
-    # Swin-v2-Large: window_size=12, stage 4 num_heads=48
-    {"batch_size": 16, "num_heads": 48, "window_size": 12},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("embeddings", "4_RelativePositionBias")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["num_heads"])
-    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_heads"], p["window_size"]]

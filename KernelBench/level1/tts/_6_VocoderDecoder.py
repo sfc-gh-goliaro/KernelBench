@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -101,27 +99,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 4, "n_mels": 80, "mel_frames": 200},
-    # HiFi-GAN: High-fidelity generative adversarial vocoder
-    {"batch_size": 8, "n_mels": 80, "mel_frames": 128},
-    # BigVGAN: Large-scale universal vocoder
-    {"batch_size": 2, "n_mels": 100, "mel_frames": 400},
-    # Vocos: Closing the gap between time-domain and Fourier-based vocoders
-    {"batch_size": 16, "n_mels": 80, "mel_frames": 64},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "6_VocoderDecoder")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    mel_spectrogram = DISTRIBUTIONS[dist_name]((p["batch_size"], p["n_mels"], p["mel_frames"]), dtype=dtype, device=device)
-    return [mel_spectrogram]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["n_mels"]]

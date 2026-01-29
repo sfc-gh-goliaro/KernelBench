@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -104,27 +102,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 16, "seq_len": 200, "hidden_size": 512, "num_emotions": 8},
-    # EmotiVoice: Multi-voice and prompt-controlled TTS
-    {"batch_size": 8, "seq_len": 300, "hidden_size": 768, "num_emotions": 12},
-    # EmoSpeech: Emotion-controllable speech synthesis
-    {"batch_size": 32, "seq_len": 128, "hidden_size": 256, "num_emotions": 6},
-    # Expressive TTS: Fine-grained emotion and style control
-    {"batch_size": 4, "seq_len": 400, "hidden_size": 1024, "num_emotions": 16},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "8_EmotionControl")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    hidden_states = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["hidden_size"]), dtype=dtype, device=device)
-    return [hidden_states, emotion_label]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["num_emotions"]]

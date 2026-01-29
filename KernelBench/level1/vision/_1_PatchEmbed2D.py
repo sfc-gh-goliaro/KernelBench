@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -64,27 +62,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "img_size": 224, "patch_size": 16, "in_channels": 3, "embed_dim": 768},
-    # Swin-v2-Tiny: hidden_size=96, patch_size=4, image_size=256
-    {"batch_size": 32, "img_size": 256, "patch_size": 4, "in_channels": 3, "embed_dim": 96},
-    # Swin-v2-Base: hidden_size=128, patch_size=4, image_size=384
-    {"batch_size": 16, "img_size": 384, "patch_size": 4, "in_channels": 3, "embed_dim": 128},
-    # Swin-v2-Large: hidden_size=192, patch_size=4, image_size=384
-    {"batch_size": 8, "img_size": 384, "patch_size": 4, "in_channels": 3, "embed_dim": 192},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "1_PatchEmbed2D")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["img_size"], p["img_size"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["img_size"], p["patch_size"], p["in_channels"], p["embed_dim"]]

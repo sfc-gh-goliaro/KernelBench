@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -86,27 +84,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # SD1.5: first down block, 512x512 image (64x64 latent)
-    {"batch_size": 8, "in_channels": 320, "out_channels": 320, "height": 64, "width": 64, "time_dim": 1280},
-    # SD1.5: mid block (bottleneck), 512x512 image (8x8 latent at bottleneck)
-    {"batch_size": 8, "in_channels": 1280, "out_channels": 1280, "height": 8, "width": 8, "time_dim": 1280},
-    # SDXL: deep block with channel expansion, 1024x1024 image (16x16 latent)
-    {"batch_size": 4, "in_channels": 1280, "out_channels": 2560, "height": 16, "width": 16, "time_dim": 1280},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "5_UNet_ResBlock")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    time_emb = DISTRIBUTIONS[dist_name]((p["batch_size"], p["time_dim"]), dtype=dtype, device=device)
-    return [x, time_emb]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["time_dim"]]

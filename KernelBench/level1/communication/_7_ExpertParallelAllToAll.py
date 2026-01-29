@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -108,27 +106,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"num_tokens": 8192, "hidden_size": 4096, "num_experts": 64},
-    # Mixtral-8x7B: 8 experts with expert parallelism
-    {"num_tokens": 4096, "hidden_size": 4096, "num_experts": 8},
-    # DeepSeek-V2: 160 experts with expert parallelism
-    {"num_tokens": 8192, "hidden_size": 5120, "num_experts": 160},
-    # DeepSeek-V3: 256 experts with expert parallelism
-    {"num_tokens": 8192, "hidden_size": 7168, "num_experts": 256},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("communication", "7_ExpertParallelAllToAll")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    tokens = DISTRIBUTIONS[dist_name]((p["num_tokens"], p["hidden_size"]), dtype=dtype, device=device)
-    return [tokens, expert_indices]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_experts"]]

@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -67,27 +65,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "height": 56, "width": 56, "channels": 96},
-    # Swin-v2-Tiny: stage 1 to 2 (96 channels, 56x56 -> 28x28)
-    {"batch_size": 32, "height": 64, "width": 64, "channels": 96},
-    # Swin-v2-Base: stage 1 to 2 (128 channels, 96x96 -> 48x48)
-    {"batch_size": 16, "height": 96, "width": 96, "channels": 128},
-    # Swin-v2-Large: stage 1 to 2 (192 channels, 96x96 -> 48x48)
-    {"batch_size": 8, "height": 96, "width": 96, "channels": 192},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "3_PatchMerging")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["height"], p["width"], p["channels"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["channels"]]

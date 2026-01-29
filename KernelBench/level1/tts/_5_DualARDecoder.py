@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -127,25 +125,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "text_len": 100, "audio_len": 500, "hidden_size": 512, "vocab_size": 1024},
-    # CosyVoice: Scalable multilingual speech synthesis
-    {"batch_size": 4, "text_len": 150, "audio_len": 750, "hidden_size": 768, "vocab_size": 2048},
-    # VALL-E 2: Neural codec language model with repetition aware sampling
-    {"batch_size": 2, "text_len": 200, "audio_len": 1000, "hidden_size": 1024, "vocab_size": 4096},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "5_DualARDecoder")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    text_embeds = DISTRIBUTIONS[dist_name]((p["batch_size"], p["text_len"], p["hidden_size"]), dtype=dtype, device=device)
-    return [text_embeds, coarse_tokens]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], 8, 4, p["vocab_size"]]

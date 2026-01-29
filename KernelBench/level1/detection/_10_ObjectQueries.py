@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -83,28 +81,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "num_queries": 300, "hidden_size": 256},
-    # DETR: 100 queries, 256 hidden
-    {"batch_size": 4, "num_queries": 100, "hidden_size": 256},
-    # Deformable DETR: 300 queries, 256 hidden
-    {"batch_size": 4, "num_queries": 300, "hidden_size": 256},
-    # DINO: 900 queries for better detection
-    {"batch_size": 2, "num_queries": 900, "hidden_size": 256},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "10_ObjectQueries")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["num_queries"])
-    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_queries"], p["hidden_size"]]

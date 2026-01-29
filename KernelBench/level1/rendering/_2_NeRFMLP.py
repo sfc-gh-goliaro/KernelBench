@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -119,27 +117,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 65536, "hidden_dim": 256},
-    # NeRF: Original NeRF configuration
-    {"batch_size": 131072, "hidden_dim": 256},
-    # Mip-NeRF: Higher capacity network
-    {"batch_size": 32768, "hidden_dim": 512},
-    # Instant-NGP: Smaller MLP with hash encoding
-    {"batch_size": 262144, "hidden_dim": 64},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "2_NeRFMLP")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    positions = DISTRIBUTIONS[dist_name]((p["batch_size"], 3), dtype=dtype, device=device)
-    return [positions, directions]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [3, 3, p["hidden_dim"]]

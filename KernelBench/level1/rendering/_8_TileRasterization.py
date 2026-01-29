@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -147,29 +145,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"num_primitives": 10000, "image_height": 512, "image_width": 512, "tile_size": 16},
-    # 3DGS: Standard tile-based rendering
-    {"num_primitives": 50000, "image_height": 800, "image_width": 800, "tile_size": 16},
-    # 3DGS-HD: High-resolution rendering with more primitives
-    {"num_primitives": 200000, "image_height": 1080, "image_width": 1920, "tile_size": 16},
-    # 3DGS-Mobile: Smaller tiles for mobile GPU efficiency
-    {"num_primitives": 25000, "image_height": 720, "image_width": 1280, "tile_size": 8},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "8_TileRasterization")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    positions_2d = DISTRIBUTIONS[dist_name]((p["num_primitives"], 2), dtype=dtype, device=device)
-    radii = DISTRIBUTIONS[dist_name]((p["num_primitives"]), dtype=dtype, device=device)
-    depths = DISTRIBUTIONS[dist_name]((p["num_primitives"]), dtype=dtype, device=device)
-    return [positions_2d, radii, colors, opacities, depths]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["image_height"], p["image_width"], p["tile_size"]]

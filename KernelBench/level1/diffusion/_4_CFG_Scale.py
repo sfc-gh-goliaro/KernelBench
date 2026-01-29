@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -48,26 +46,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # SD1.5: 4 latent channels, 512x512 image (64x64 latent)
-    {"batch_size": 8, "channels": 4, "height": 64, "width": 64},
-    # SDXL: 4 latent channels, 1024x1024 image (128x128 latent)
-    {"batch_size": 4, "channels": 4, "height": 128, "width": 128},
-    # SD3/FLUX: 16 latent channels, 1024x1024 image (128x128 latent)
-    {"batch_size": 4, "channels": 16, "height": 128, "width": 128},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "4_CFG_Scale")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    cond_output = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    uncond_output = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [cond_output, uncond_output]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [7.5]

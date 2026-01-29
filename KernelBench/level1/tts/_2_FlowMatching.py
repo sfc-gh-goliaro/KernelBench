@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,29 +106,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "time_frames": 300, "mel_dim": 80, "hidden_dim": 512},
-    # VoiceBox: Text-guided multilingual speech generation
-    {"batch_size": 4, "time_frames": 500, "mel_dim": 100, "hidden_dim": 768},
-    # Matcha-TTS: Fast ODE-based speech synthesis
-    {"batch_size": 16, "time_frames": 200, "mel_dim": 80, "hidden_dim": 256},
-    # E2-TTS: Embarrassingly easy text-to-speech
-    {"batch_size": 2, "time_frames": 800, "mel_dim": 128, "hidden_dim": 1024},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("tts", "2_FlowMatching")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x_0 = DISTRIBUTIONS[dist_name]((p["batch_size"], p["time_frames"], p["mel_dim"]), dtype=dtype, device=device)
-    x_1 = DISTRIBUTIONS[dist_name]((p["batch_size"], p["time_frames"], p["mel_dim"]), dtype=dtype, device=device)
-    t = DISTRIBUTIONS[dist_name]((p["batch_size"]), dtype=dtype, device=device)
-    return [x_0, x_1, t]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["mel_dim"], p["hidden_dim"]]

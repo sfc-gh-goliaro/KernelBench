@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -12,31 +10,3 @@ class Model(nn.Module):
     def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor) -> torch.Tensor:
         out = torch.nn.functional.scaled_dot_product_attention(Q, K, V)
         return out
-
-
-PARAMETERS = [
-    # Prefill-heavy: Llama-3.1-8B prefill with long context
-    {"batch_size": 4, "num_heads": 32, "sequence_length": 2048, "embedding_dimension": 128},
-    # Prefill-heavy: Llama-3.1-8B prefill with medium context
-    {"batch_size": 8, "num_heads": 32, "sequence_length": 1024, "embedding_dimension": 128},
-    # Decode-heavy: Llama-3.1-8B single token generation (Q=1, KV=context)
-    {"batch_size": 64, "num_heads": 32, "sequence_length": 1, "embedding_dimension": 128},
-    # Decode-heavy: Mistral-7B batched decoding (Q=1, KV=context)
-    {"batch_size": 128, "num_heads": 32, "sequence_length": 1, "embedding_dimension": 128},
-    # Prefill-heavy: ViT-L/14 image patches (196 patches)
-    {"batch_size": 32, "num_heads": 16, "sequence_length": 197, "embedding_dimension": 64},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "1_ScaledDotProductAttention")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    Q = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["sequence_length"], p["embedding_dimension"]), dtype=dtype, device=device)
-    K = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["sequence_length"], p["embedding_dimension"]), dtype=dtype, device=device)
-    V = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["sequence_length"], p["embedding_dimension"]), dtype=dtype, device=device)
-    return [Q, K, V]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return []

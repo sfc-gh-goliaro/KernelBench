@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -106,27 +104,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"num_tokens": 4096, "hidden_size": 7168, "intermediate_size": 2048, "num_experts": 64, "top_k": 6, "shared_expert_intermediate": 2048},
-    # DeepSeek-V2-Lite: hidden_size=2048, num_experts=64, top_k=6
-    {"num_tokens": 4096, "hidden_size": 2048, "intermediate_size": 1408, "num_experts": 64, "top_k": 6, "shared_expert_intermediate": 1408},
-    # DeepSeek-V3: hidden_size=7168, num_experts=256, top_k=8
-    {"num_tokens": 2048, "hidden_size": 7168, "intermediate_size": 2048, "num_experts": 256, "top_k": 8, "shared_expert_intermediate": 2048},
-    # DeepSeek-R1: hidden_size=7168, num_experts=256, top_k=8 (same architecture as V3)
-    {"num_tokens": 1024, "hidden_size": 7168, "intermediate_size": 2048, "num_experts": 256, "top_k": 8, "shared_expert_intermediate": 2048},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("moe", "6_SharedFusedMoE")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["num_tokens"], p["hidden_size"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["intermediate_size"], p["num_experts"], p["top_k"], p["shared_expert_intermediate"]]

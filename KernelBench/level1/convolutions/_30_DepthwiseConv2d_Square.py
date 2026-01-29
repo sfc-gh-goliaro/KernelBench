@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -33,26 +31,3 @@ class Model(nn.Module):
         return self.conv2d(x)
 
 # Test code
-
-PARAMETERS = [
-    {"batch_size": 16, "in_channels": 64, "kernel_size": 3, "width": 512, "height": 512, "stride": 1, "padding": 0},
-    # EfficientNet-B0: MBConv block (32 channels, 112x112)
-    {"batch_size": 32, "in_channels": 32, "kernel_size": 3, "width": 112, "height": 112, "stride": 1, "padding": 1},
-    # EfficientNet-B4: MBConv block (48 channels, 190x190)
-    {"batch_size": 16, "in_channels": 48, "kernel_size": 5, "width": 190, "height": 190, "stride": 2, "padding": 2},
-    # EfficientNet-B7: MBConv block (64 channels, 300x300)
-    {"batch_size": 8, "in_channels": 64, "kernel_size": 5, "width": 300, "height": 300, "stride": 2, "padding": 2},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "30_DepthwiseConv2d_Square")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["kernel_size"], p["stride"], p["padding"]]

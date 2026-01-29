@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -57,27 +55,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "num_patches": 576, "vision_dim": 1024, "llm_dim": 4096},
-    # LLaVA-1.5: CLIP ViT-L/14 to Vicuna-7B
-    {"batch_size": 4, "num_patches": 576, "vision_dim": 1024, "llm_dim": 4096},
-    # Qwen-VL: OpenCLIP ViT-G to Qwen-7B
-    {"batch_size": 4, "num_patches": 256, "vision_dim": 1664, "llm_dim": 4096},
-    # InternVL-1.5: InternViT-6B to InternLM2-Chat-20B
-    {"batch_size": 2, "num_patches": 256, "vision_dim": 3200, "llm_dim": 5120},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "5_VisionProjection")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_patches"], p["vision_dim"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["vision_dim"], p["llm_dim"]]

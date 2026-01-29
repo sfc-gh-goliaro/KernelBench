@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -74,26 +72,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # SpecInfer tree expansion (Llama-2-7B)
-    {"batch_size": 8, "num_leaves": 16, "vocab_size": 32000, "top_k": 4, "max_depth": 5},
-    # Sequoia optimal tree (Llama-3.1-8B)
-    {"batch_size": 4, "num_leaves": 32, "vocab_size": 128256, "top_k": 6, "max_depth": 7},
-    # EAGLE-2 dynamic tree (Vicuna-7B)
-    {"batch_size": 8, "num_leaves": 24, "vocab_size": 32000, "top_k": 5, "max_depth": 6},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "8_TreeExpansion")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    logits = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_leaves"], p["vocab_size"]), dtype=dtype, device=device)
-    return [logits, current_depth]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["top_k"], p["max_depth"]]

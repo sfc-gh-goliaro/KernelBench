@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,27 +65,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "height": 40, "width": 40},
-    # YOLOv8-Nano: backbone CSP at P3 (64 channels, 80x80)
-    {"batch_size": 8, "in_channels": 64, "out_channels": 64, "height": 80, "width": 80},
-    # YOLOv8-Medium: backbone CSP at P4 (256 channels, 40x40)
-    {"batch_size": 8, "in_channels": 256, "out_channels": 256, "height": 40, "width": 40},
-    # YOLOv8-XLarge: backbone CSP at P5 (512 channels, 20x20)
-    {"batch_size": 4, "in_channels": 512, "out_channels": 512, "height": 20, "width": 20},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("detection", "1_CSPBlock")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"]]

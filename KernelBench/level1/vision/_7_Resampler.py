@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -97,27 +95,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "num_vision_tokens": 576, "vision_dim": 1024, "output_dim": 4096, "num_queries": 64},
-    # Qwen-VL: 256 queries for dense resampling
-    {"batch_size": 4, "num_vision_tokens": 1024, "vision_dim": 1664, "output_dim": 4096, "num_queries": 256},
-    # Flamingo-3B: OpenCLIP to LLM projection
-    {"batch_size": 8, "num_vision_tokens": 256, "vision_dim": 1024, "output_dim": 2560, "num_queries": 64},
-    # Idefics-80B: large model configuration
-    {"batch_size": 2, "num_vision_tokens": 576, "vision_dim": 1280, "output_dim": 8192, "num_queries": 128},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vision", "7_Resampler")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    vision_features = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_vision_tokens"], p["vision_dim"]), dtype=dtype, device=device)
-    return [vision_features]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["vision_dim"], p["output_dim"], p["num_queries"]]

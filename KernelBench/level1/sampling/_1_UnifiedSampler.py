@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -192,29 +190,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # High-throughput: Llama-2-7B batched generation (large batch, short context)
-    {"batch_size": 128, "vocab_size": 32000, "context_len": 512, "temperature": 0.7, "top_k": 50, "top_p": 0.9},
-    # High-throughput: Llama-3.1-8B high-volume inference
-    {"batch_size": 64, "vocab_size": 128256, "context_len": 1024, "temperature": 0.6, "top_k": 40, "top_p": 0.95},
-    # Low-latency: Llama-3.1-8B long context with repetition penalty
-    {"batch_size": 8, "vocab_size": 128256, "context_len": 8192, "temperature": 0.7, "top_k": 50, "top_p": 0.9},
-    # Low-latency: Llama-3.1-70B long context generation
-    {"batch_size": 4, "vocab_size": 128256, "context_len": 16384, "temperature": 0.8, "top_k": 0, "top_p": 0.92},
-    # Balanced: Mistral-7B standard decoding
-    {"batch_size": 32, "vocab_size": 32768, "context_len": 2048, "temperature": 0.75, "top_k": 64, "top_p": 0.9},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("sampling", "1_UnifiedSampler")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    logits = DISTRIBUTIONS[dist_name]((p["batch_size"], p["vocab_size"]), dtype=dtype, device=device)
-    return [logits, input_ids]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return []

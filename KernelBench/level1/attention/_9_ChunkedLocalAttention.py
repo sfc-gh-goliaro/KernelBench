@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -172,36 +170,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Prefill-heavy: Llama-4 initial prompt processing (4096 tokens, chunk_size=8192)
-    {"batch_size": 2, "seq_len": 4096, "context_len": 0, "num_heads": 32, "head_dim": 128, "chunk_size": 8192, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 520},
-    # Prefill-heavy: Longformer-style chunked prefill (2048 tokens)
-    {"batch_size": 4, "seq_len": 2048, "context_len": 2048, "num_heads": 32, "head_dim": 128, "chunk_size": 512, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 1040},
-    # Decode-heavy: Llama-4 high-throughput decoding (1 token, 8k context)
-    {"batch_size": 64, "seq_len": 1, "context_len": 8192, "num_heads": 32, "head_dim": 128, "chunk_size": 8192, "block_size": 16, "max_blocks_per_seq": 513, "num_blocks": 33000},
-    # Decode-heavy: Llama-4 long context generation (1 token, 32k context)
-    {"batch_size": 8, "seq_len": 1, "context_len": 32768, "num_heads": 32, "head_dim": 128, "chunk_size": 8192, "block_size": 16, "max_blocks_per_seq": 2049, "num_blocks": 16500},
-    # Decode-heavy: Longformer batched generation (1 token, 4k context)
-    {"batch_size": 32, "seq_len": 1, "context_len": 4096, "num_heads": 12, "head_dim": 64, "chunk_size": 512, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 8300},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "9_ChunkedLocalAttention")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    # Pre-projected Q, K, V tensors
-    q = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
-    k = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
-    v = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
-    kv_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["num_heads"], p["head_dim"], 2), dtype=dtype, device=device)
-    block_table = torch.randint(0, p["num_blocks"], (p["batch_size"], p["max_blocks_per_seq"]), device=device)
-    context_lens = torch.full((p["batch_size"],), p["context_len"], dtype=torch.long, device=device)
-    return [q, k, v, kv_cache_pool, block_table, context_lens]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_heads"], p["head_dim"], p["chunk_size"], p["block_size"]]

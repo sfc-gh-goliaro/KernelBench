@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -147,30 +145,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Prefill-heavy: Mamba-1-1.4B initial prompt processing (4096 tokens)
-    {"batch_size": 4, "seq_length": 4096, "hidden_size": 2048, "state_size": 16, "conv_kernel_size": 4, "expand_factor": 2},
-    # Prefill-heavy: Jamba-hybrid long context prefill (2048 tokens)
-    {"batch_size": 4, "seq_length": 2048, "hidden_size": 4096, "state_size": 16, "conv_kernel_size": 4, "expand_factor": 2},
-    # Decode-heavy: Mamba-1-1.4B autoregressive generation (1 token per step)
-    {"batch_size": 64, "seq_length": 1, "hidden_size": 2048, "state_size": 16, "conv_kernel_size": 4, "expand_factor": 2},
-    # Decode-heavy: Mamba-2-2.7B batched token generation (1 token)
-    {"batch_size": 128, "seq_length": 1, "hidden_size": 2560, "state_size": 128, "conv_kernel_size": 4, "expand_factor": 2},
-    # Decode-heavy: Jamba-hybrid high-throughput decoding (1 token)
-    {"batch_size": 32, "seq_length": 1, "hidden_size": 4096, "state_size": 16, "conv_kernel_size": 4, "expand_factor": 2},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "7_MambaMixer")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["hidden_size"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["state_size"], p["conv_kernel_size"], p["expand_factor"]]

@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -39,26 +37,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "channels": 2048, "height": 7, "width": 7},
-    # ResNet-50: final global avg pool (2048 channels, 7x7)
-    {"batch_size": 32, "channels": 2048, "height": 7, "width": 7},
-    # EfficientNet-B4: final global avg pool (1792 channels, 12x12)
-    {"batch_size": 16, "channels": 1792, "height": 12, "width": 12},
-    # EfficientNet-B7: final global avg pool (2560 channels, 19x19)
-    {"batch_size": 8, "channels": 2560, "height": 19, "width": 19},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "8_GlobalAveragePooling")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return []

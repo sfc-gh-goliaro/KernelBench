@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -147,31 +145,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Low-latency: Llama-3.1-8B with deep EAGLE head (8 draft positions)
-    {"batch_size": 4, "seq_len": 1, "hidden_size": 4096, "vocab_size": 128256, "num_draft_heads": 8, "mode": 'autoregressive'},
-    # Low-latency: Llama-3.1-70B with EAGLE-2 (6 positions, large model)
-    {"batch_size": 2, "seq_len": 1, "hidden_size": 8192, "vocab_size": 128256, "num_draft_heads": 6, "mode": 'autoregressive'},
-    # High-throughput: Llama-2-7B batched Medusa (4 heads, large batch)
-    {"batch_size": 64, "seq_len": 1, "hidden_size": 4096, "vocab_size": 32000, "num_draft_heads": 4, "mode": 'parallel'},
-    # High-throughput: Mistral-7B Medusa high-volume (5 heads)
-    {"batch_size": 32, "seq_len": 1, "hidden_size": 4096, "vocab_size": 32768, "num_draft_heads": 5, "mode": 'parallel'},
-    # Balanced: Vicuna-13B extended Medusa
-    {"batch_size": 16, "seq_len": 1, "hidden_size": 5120, "vocab_size": 32000, "num_draft_heads": 5, "mode": 'parallel'},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "3_DraftHead")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    hidden_states = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["hidden_size"]), dtype=dtype, device=device)
-    hidden_states = DISTRIBUTIONS[dist_name]((p["batch_size"], p["hidden_size"]), dtype=dtype, device=device)
-    return [hidden_states]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["vocab_size"], p["num_draft_heads"], p["mode"]]

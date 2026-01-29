@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -36,26 +34,3 @@ class Model(nn.Module):
         return self.conv_transpose3d(x)
 
 # Test code
-
-PARAMETERS = [
-    {"batch_size": 8, "in_channels": 48, "out_channels": 48, "kernel_size": 3, "depth": 64, "height": 64, "width": 64},
-    # Video-ResNet: 3D upsampling layer in video generation decoder
-    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_size": 4, "depth": 8, "height": 16, "width": 16},
-    # 3D-UNet: decoder block for medical imaging segmentation
-    {"batch_size": 2, "in_channels": 256, "out_channels": 128, "kernel_size": 2, "depth": 32, "height": 32, "width": 32},
-    # C3D: video classification upsampling
-    {"batch_size": 8, "in_channels": 128, "out_channels": 64, "kernel_size": 3, "depth": 16, "height": 56, "width": 56},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "15_ConvTranspose3d_Square")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["depth"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["kernel_size"]]

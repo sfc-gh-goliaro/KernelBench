@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -115,27 +113,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 2, "num_points": 10000, "grid_size": 64},
-    # NeuS: Neural implicit surface reconstruction
-    {"batch_size": 4, "num_points": 50000, "grid_size": 128},
-    # VolSDF: Volume-based SDF learning
-    {"batch_size": 2, "num_points": 100000, "grid_size": 256},
-    # NeuralAngelo: High-resolution surface extraction
-    {"batch_size": 1, "num_points": 200000, "grid_size": 512},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("rendering", "7_PoissonReconstruction")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    points = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_points"], 3), dtype=dtype, device=device)
-    return [points, normals]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["grid_size"], 50]

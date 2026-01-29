@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -67,26 +65,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "seq_length": 1024, "hidden_size": 1152, "cond_dim": 1152},
-    # SDXL-Turbo: hidden_size=1280, image 512x512 (patches = 1024)
-    {"batch_size": 8, "seq_length": 1024, "hidden_size": 1280, "cond_dim": 1280},
-    # SDXL-Lightning: hidden_size=1280, image 1024x1024 (patches = 4096)
-    {"batch_size": 4, "seq_length": 4096, "hidden_size": 1280, "cond_dim": 1280},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("diffusion", "1_AdaLN")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["hidden_size"]), dtype=dtype, device=device)
-    conditioning = DISTRIBUTIONS[dist_name]((p["batch_size"], p["cond_dim"]), dtype=dtype, device=device)
-    return [x, conditioning]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["cond_dim"]]

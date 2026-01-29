@@ -15,8 +15,6 @@ Based on transformers.integrations.finegrained_fp8 and DeepSeek's inference kern
 
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -519,26 +517,3 @@ FP8Linear = Model
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "in_features": 4096, "out_features": 4096},
-    # DeepSeek-R1: Q low-rank projection
-    {"batch_size": 4, "seq_length": 4096, "in_features": 7168, "out_features": 1536},
-    # DeepSeek-R1: KV projection
-    {"batch_size": 4, "seq_length": 4096, "in_features": 7168, "out_features": 576},
-    # DeepSeek-R1: MLP gate projection
-    {"batch_size": 2, "seq_length": 8192, "in_features": 7168, "out_features": 18432},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("matmul", "11_FP8_GEMM")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.bfloat16, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["in_features"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_features"], p["out_features"]]

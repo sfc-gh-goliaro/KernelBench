@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -43,27 +41,3 @@ class Model(nn.Module):
                      (torch.sin(self.t * theta) / sin_theta) * w2_flat
         
         return result.view(w1.shape)
-
-
-
-PARAMETERS = [
-    # Llama-3.1 8B: attention QKV projection merging
-    {"param_shape": (4096, 4096)},
-    # Qwen2 7B: MLP down projection interpolation
-    {"param_shape": (3584, 18944)},
-    # Phi-3 Mini: feed-forward layer interpolation
-    {"param_shape": (3072, 8192)},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "2_SLERP")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    w1 = DISTRIBUTIONS[dist_name]((*p["param_shape"]), dtype=dtype, device=device)
-    w2 = DISTRIBUTIONS[dist_name]((*p["param_shape"]), dtype=dtype, device=device)
-    return [w1, w2]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [0.5]

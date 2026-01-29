@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -84,27 +82,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "in_channels": 96, "out_channels": 96, "height": 56, "width": 56, "expand_ratio": 6},
-    # EfficientNet-B0: MBConv stage 2 (32 channels, 112x112)
-    {"batch_size": 32, "in_channels": 32, "out_channels": 16, "height": 112, "width": 112, "expand_ratio": 1},
-    # EfficientNet-B4: MBConv stage 3 (48 channels, 95x95)
-    {"batch_size": 16, "in_channels": 48, "out_channels": 24, "height": 95, "width": 95, "expand_ratio": 6},
-    # EfficientNet-B7: MBConv stage 4 (80 channels, 75x75)
-    {"batch_size": 8, "in_channels": 80, "out_channels": 48, "height": 75, "width": 75, "expand_ratio": 6},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("mobile", "1_InvertedResidual")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["expand_ratio"]]

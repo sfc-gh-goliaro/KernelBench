@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -185,36 +183,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Prefill-heavy: BLOOM-7B initial prompt processing (2048 tokens)
-    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "num_heads": 32, "head_dim": 128, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
-    # Prefill-heavy: MPT-7B chunked prefill (1024 token chunks)
-    {"batch_size": 8, "seq_len": 1024, "context_len": 2048, "num_heads": 32, "head_dim": 128, "block_size": 16, "max_blocks_per_seq": 193, "num_blocks": 1560},
-    # Decode-heavy: Falcon-7B high-throughput decoding (1 token, 2k context)
-    {"batch_size": 64, "seq_len": 1, "context_len": 2048, "num_heads": 71, "head_dim": 64, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 8300},
-    # Decode-heavy: Falcon-40B batched generation (1 token, 2k context)
-    {"batch_size": 16, "seq_len": 1, "context_len": 2048, "num_heads": 128, "head_dim": 64, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 2100},
-    # Decode-heavy: BLOOM-176B long context decoding (1 token, 4k context)
-    {"batch_size": 4, "seq_len": 1, "context_len": 4096, "num_heads": 112, "head_dim": 128, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 1040},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "6_ALiBi")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    # Pre-projected Q, K, V tensors
-    q = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
-    k = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
-    v = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], p["head_dim"]), dtype=dtype, device=device)
-    kv_cache_pool = DISTRIBUTIONS[dist_name]((p["num_blocks"], p["block_size"], p["num_heads"], p["head_dim"], 2), dtype=dtype, device=device)
-    block_table = torch.randint(0, p["num_blocks"], (p["batch_size"], p["max_blocks_per_seq"]), device=device)
-    context_lens = torch.full((p["batch_size"],), p["context_len"], dtype=torch.long, device=device)
-    return [q, k, v, kv_cache_pool, block_table, context_lens]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_heads"], p["head_dim"], p["block_size"]]

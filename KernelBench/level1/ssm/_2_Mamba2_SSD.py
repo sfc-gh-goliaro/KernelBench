@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -116,30 +114,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Prefill-heavy: Mamba-2-2.7B initial prompt processing (4096 tokens)
-    {"batch_size": 4, "seq_length": 4096, "d_model": 2560, "d_state": 128},
-    # Prefill-heavy: Codestral-Mamba long context prefill (8192 tokens)
-    {"batch_size": 2, "seq_length": 8192, "d_model": 4096, "d_state": 64},
-    # Decode-heavy: Mamba-2-1.3B autoregressive generation (1 token)
-    {"batch_size": 64, "seq_length": 1, "d_model": 2048, "d_state": 128},
-    # Decode-heavy: Mamba-2-2.7B batched token generation (1 token)
-    {"batch_size": 128, "seq_length": 1, "d_model": 2560, "d_state": 128},
-    # Decode-heavy: Codestral-Mamba high-throughput decoding (1 token)
-    {"batch_size": 32, "seq_length": 1, "d_model": 4096, "d_state": 64},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "2_Mamba2_SSD")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["d_model"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["d_model"], p["d_state"]]

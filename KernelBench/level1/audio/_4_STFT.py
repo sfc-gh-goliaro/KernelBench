@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -80,27 +78,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 16, "num_samples": 16000 * 30, "n_fft": 400, "hop_length": 160, "win_length": 400, "window": 'hann'},
-    # Whisper: 30s audio at 16kHz, 400 FFT
-    {"batch_size": 8, "num_samples": 16000 * 30, "n_fft": 400, "hop_length": 160, "win_length": 400, "window": 'hann'},
-    # Qwen2-Audio: 10s audio
-    {"batch_size": 16, "num_samples": 16000 * 10, "n_fft": 512, "hop_length": 256, "win_length": 512, "window": 'hann'},
-    # SeamlessM4T: shorter segments
-    {"batch_size": 32, "num_samples": 16000 * 5, "n_fft": 400, "hop_length": 160, "win_length": 400, "window": 'hann'},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("audio", "4_STFT")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    waveform = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_samples"]), dtype=dtype, device=device)
-    return [waveform]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["n_fft"], p["hop_length"], p["win_length"], p["window"]]

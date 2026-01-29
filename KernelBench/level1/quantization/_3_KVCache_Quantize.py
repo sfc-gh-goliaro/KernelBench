@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -97,28 +95,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "num_heads": 32, "seq_length": 2048, "head_dim": 128},
-    # Llama-3.1-8B: INT8 KV cache for long context serving
-    {"batch_size": 4, "num_heads": 8, "seq_length": 32768, "head_dim": 128},
-    # Mistral-7B: Grouped-query attention KV cache quantization
-    {"batch_size": 16, "num_heads": 8, "seq_length": 4096, "head_dim": 128},
-    # DeepSeek-V2: MLA compressed KV cache
-    {"batch_size": 2, "num_heads": 16, "seq_length": 16384, "head_dim": 192},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "3_KVCache_Quantize")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    k = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_length"], p["head_dim"]), dtype=dtype, device=device)
-    v = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_length"], p["head_dim"]), dtype=dtype, device=device)
-    return [k, v]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_heads"], p["head_dim"]]

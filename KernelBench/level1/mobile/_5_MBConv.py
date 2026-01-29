@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -120,29 +118,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "in_channels": 32, "out_channels": 32, "expand_ratio": 6, "kernel_size": 3, "stride": 1, "use_se": True, "se_ratio": 0.25, "height": 56, "width": 56},
-    # EfficientNet-B0: stage 2 (32->16 channels, 112x112)
-    {"batch_size": 32, "in_channels": 32, "out_channels": 16, "expand_ratio": 1, "kernel_size": 3, "stride": 1, "use_se": True, "se_ratio": 0.25, "height": 112, "width": 112},
-    # EfficientNet-B0: stage 3 (16->24 channels, 112x112->56x56)
-    {"batch_size": 32, "in_channels": 16, "out_channels": 24, "expand_ratio": 6, "kernel_size": 3, "stride": 2, "use_se": True, "se_ratio": 0.25, "height": 112, "width": 112},
-    # EfficientNet-B4: stage 4 (48->24 channels, 95x95)
-    {"batch_size": 16, "in_channels": 48, "out_channels": 24, "expand_ratio": 6, "kernel_size": 5, "stride": 1, "use_se": True, "se_ratio": 0.25, "height": 95, "width": 95},
-    # EfficientNet-B7: stage 5 (80->48 channels, 75x75)
-    {"batch_size": 8, "in_channels": 80, "out_channels": 48, "expand_ratio": 6, "kernel_size": 5, "stride": 1, "use_se": True, "se_ratio": 0.25, "height": 75, "width": 75},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("mobile", "5_MBConv")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["expand_ratio"], p["kernel_size"], p["stride"], p["use_se"], p["se_ratio"]]

@@ -22,8 +22,6 @@ Shapes:
 
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -401,60 +399,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # DeepSeek-V2-Lite prefill
-    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "num_heads": 16, 
-     "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
-     "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
-    # DeepSeek-V2-Lite decode
-    {"batch_size": 32, "seq_len": 1, "context_len": 2048, "num_heads": 16,
-     "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
-     "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 4200},
-    # DeepSeek-V2 prefill
-    {"batch_size": 4, "seq_len": 2048, "context_len": 0, "num_heads": 128,
-     "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
-     "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 129, "num_blocks": 520},
-    # DeepSeek-V2 decode
-    {"batch_size": 16, "seq_len": 1, "context_len": 4096, "num_heads": 128,
-     "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
-     "kv_lora_rank": 512, "block_size": 16, "max_blocks_per_seq": 257, "num_blocks": 4200},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("attention", "5_MultiHeadLatentAttention")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    
-    qk_head_dim = p["qk_nope_head_dim"] + p["qk_rope_head_dim"]
-    q = DISTRIBUTIONS[dist_name]((p["batch_size"], p["num_heads"], p["seq_len"], qk_head_dim), dtype=dtype, device=device)
-    kv_c = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_len"], p["kv_lora_rank"]), dtype=dtype, device=device)
-    k_pe = DISTRIBUTIONS[dist_name]((p["batch_size"], 1, p["seq_len"], p["qk_rope_head_dim"]), dtype=dtype, device=device)
-    
-    batch_size = p["batch_size"]
-    seq_len = p["seq_len"]
-    context_len = p["context_len"]
-    block_size = p["block_size"]
-    
-    block_table = torch.randint(0, p["num_blocks"], (batch_size, p["max_blocks_per_seq"]), device=device)
-    context_lens = torch.full((batch_size,), context_len, dtype=torch.long, device=device)
-    seq_lens = context_lens + seq_len
-    
-    attn_metadata = create_attention_metadata(
-        batch_size=batch_size,
-        seq_lens=seq_lens,
-        context_lens=context_lens,
-        block_table=block_table,
-        block_size=block_size,
-        device=device,
-    )
-    
-    return [q, kv_c, k_pe, attn_metadata]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["num_heads"], p["qk_nope_head_dim"], p["qk_rope_head_dim"], 
-            p["v_head_dim"], p["kv_lora_rank"], p["block_size"], p["num_blocks"]]

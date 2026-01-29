@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -80,27 +78,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Standard prompt lookup decoding
-    {"batch_size": 8, "context_len": 2048, "query_len": 4, "ngram_len": 5, "max_matches": 5},
-    # REST retrieval with longer context (Llama-3.1-8B)
-    {"batch_size": 4, "context_len": 8192, "query_len": 6, "ngram_len": 8, "max_matches": 10},
-    # Short context prompt lookup (Mistral-7B)
-    {"batch_size": 16, "context_len": 1024, "query_len": 3, "ngram_len": 4, "max_matches": 8},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("speculative", "5_NGramPool")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    shape = (p["batch_size"], p["context_len"])
-    x = DISTRIBUTIONS[dist_name](shape, dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["ngram_len"], p["max_matches"]]

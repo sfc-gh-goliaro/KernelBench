@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -104,30 +102,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    # Prefill-heavy: GLA-7B initial prompt processing (4096 tokens)
-    {"batch_size": 4, "seq_length": 4096, "hidden_size": 4096, "num_heads": 16},
-    # Prefill-heavy: GLA-1.3B long context prefill (8192 tokens)
-    {"batch_size": 2, "seq_length": 8192, "hidden_size": 2048, "num_heads": 8},
-    # Decode-heavy: GLA-1.3B autoregressive generation (1 token per step)
-    {"batch_size": 64, "seq_length": 1, "hidden_size": 2048, "num_heads": 8},
-    # Decode-heavy: GLA-7B batched token generation (1 token)
-    {"batch_size": 128, "seq_length": 1, "hidden_size": 4096, "num_heads": 16},
-    # Decode-heavy: GLA-13B high-throughput decoding (1 token)
-    {"batch_size": 32, "seq_length": 1, "hidden_size": 5120, "num_heads": 20},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("ssm", "5_GLA_Recurrence")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["hidden_size"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["num_heads"]]

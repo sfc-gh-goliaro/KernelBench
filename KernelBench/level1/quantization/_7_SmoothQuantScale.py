@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -55,27 +53,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 8, "seq_length": 2048, "hidden_size": 4096, "alpha": 0.5},
-    # Llama-3.1-70B: W8A8 quantization with balanced migration
-    {"batch_size": 2, "seq_length": 4096, "hidden_size": 8192, "alpha": 0.5},
-    # Mistral-7B: TensorRT-LLM INT8 deployment
-    {"batch_size": 16, "seq_length": 2048, "hidden_size": 4096, "alpha": 0.6},
-    # Falcon-40B: Aggressive weight migration for outlier activations
-    {"batch_size": 4, "seq_length": 2048, "hidden_size": 8192, "alpha": 0.75},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("quantization", "7_SmoothQuantScale")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["seq_length"], p["hidden_size"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["hidden_size"], p["alpha"]]

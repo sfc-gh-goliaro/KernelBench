@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 from typing import Tuple
@@ -146,27 +144,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration (Multi-tenant quantized serving)
 # ============================================================================
-
-
-PARAMETERS = [
-    {"total_tokens": 8192, "in_features": 4096, "out_features": 4096, "num_adapters": 100, "rank": 16, "group_size": 128},
-    # Llama-3.1-8B: hidden_size=4096, QLoRA for multi-tenant serving
-    {"total_tokens": 4096, "in_features": 4096, "out_features": 4096, "num_adapters": 50, "rank": 32, "group_size": 128},
-    # Llama-3.1-70B: hidden_size=8192, QLoRA for multi-tenant serving
-    {"total_tokens": 2048, "in_features": 8192, "out_features": 8192, "num_adapters": 20, "rank": 16, "group_size": 128},
-    # Mistral-7B: hidden_size=4096, QLoRA for multi-tenant serving
-    {"total_tokens": 8192, "in_features": 4096, "out_features": 14336, "num_adapters": 100, "rank": 16, "group_size": 128},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("peft", "2_QLoRA_Linear")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["total_tokens"], p["in_features"]), dtype=dtype, device=device)
-    return [x, adapter_ids]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_features"], p["out_features"], p["num_adapters"], p["rank"]]

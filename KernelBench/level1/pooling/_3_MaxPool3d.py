@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -35,27 +33,3 @@ class Model(nn.Module):
             torch.Tensor: Output tensor with Max Pooling 3D applied.
         """
         return self.maxpool(x)
-
-
-PARAMETERS = [
-    {"batch_size": 16, "channels": 32, "dim1": 128, "dim2": 128, "dim3": 128, "kernel_size": 3, "stride": 2, "padding": 1, "dilation": 3},
-    # C3D: maxpool after conv1 (64 channels, 16 frames x 112x112)
-    {"batch_size": 8, "channels": 64, "dim1": 16, "dim2": 112, "dim3": 112, "kernel_size": 2, "stride": 2, "padding": 0, "dilation": 1},
-    # I3D: temporal-spatial pooling (192 channels, 32 frames x 28x28)
-    {"batch_size": 4, "channels": 192, "dim1": 32, "dim2": 28, "dim3": 28, "kernel_size": 3, "stride": 2, "padding": 1, "dilation": 1},
-    # SlowFast: slow pathway maxpool (256 channels, 8 frames x 56x56)
-    {"batch_size": 8, "channels": 256, "dim1": 8, "dim2": 56, "dim3": 56, "kernel_size": 2, "stride": 2, "padding": 0, "dilation": 1},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("pooling", "3_MaxPool3d")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["dim1"], p["dim2"], p["dim3"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["kernel_size"], p["stride"], p["padding"], p["dilation"]]

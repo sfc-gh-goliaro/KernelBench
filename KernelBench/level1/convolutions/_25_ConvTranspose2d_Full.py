@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -37,26 +35,3 @@ class Model(nn.Module):
         return self.conv_transpose2d(x)
 
 # Test code
-
-PARAMETERS = [
-    {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_size": (3, 5), "height": 128, "width": 256, "stride": (2, 3), "padding": (1, 2), "dilation": (2, 1), "groups": 4},
-    # SDXL-VAE: full-featured decoder transpose conv
-    {"batch_size": 1, "in_channels": 512, "out_channels": 256, "kernel_size": (3, 3), "height": 64, "width": 64, "stride": (2, 2), "padding": (1, 1), "dilation": (1, 1), "groups": 1},
-    # DeepLabV3+: ASPP with dilated grouped transpose
-    {"batch_size": 4, "in_channels": 256, "out_channels": 256, "kernel_size": (3, 3), "height": 65, "width": 65, "stride": (1, 1), "padding": (6, 6), "dilation": (6, 6), "groups": 4},
-    # StyleGAN2: adaptive generator upsampling
-    {"batch_size": 8, "in_channels": 512, "out_channels": 256, "kernel_size": (4, 4), "height": 16, "width": 16, "stride": (2, 2), "padding": (1, 1), "dilation": (1, 1), "groups": 1},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "25_ConvTranspose2d_Full")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["kernel_size"], p["stride"], p["padding"], p["dilation"], p["groups"]]

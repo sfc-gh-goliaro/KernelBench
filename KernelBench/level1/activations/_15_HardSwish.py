@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -40,26 +38,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 32, "channels": 960, "height": 7, "width": 7},
-    # EfficientNet-B0: stem output (32 channels, 112x112)
-    {"batch_size": 32, "channels": 32, "height": 112, "width": 112},
-    # EfficientNet-B4: stem output (48 channels, 190x190)
-    {"batch_size": 16, "channels": 48, "height": 190, "width": 190},
-    # EfficientNet-B7: stem output (64 channels, 300x300)
-    {"batch_size": 8, "channels": 64, "height": 300, "width": 300},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("activations", "15_HardSwish")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return []

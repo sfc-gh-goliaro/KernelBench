@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -74,28 +72,3 @@ class Model(nn.Module):
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
-
-
-PARAMETERS = [
-    {"batch_size": 256, "embedding_dim": 768, "temperature": 0.07},
-    # CLIP ViT-L/14: image-text contrastive learning
-    {"batch_size": 512, "embedding_dim": 768, "temperature": 0.01},
-    # SimCLR ResNet-50: self-supervised visual learning (2048 dim projection)
-    {"batch_size": 4096, "embedding_dim": 2048, "temperature": 0.5},
-    # Sentence-BERT: contrastive sentence embedding
-    {"batch_size": 1024, "embedding_dim": 384, "temperature": 0.05},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("loss", "7_ContrastiveLoss")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    embeddings_a = DISTRIBUTIONS[dist_name]((p["batch_size"], p["embedding_dim"]), dtype=dtype, device=device)
-    embeddings_b = DISTRIBUTIONS[dist_name]((p["batch_size"], p["embedding_dim"]), dtype=dtype, device=device)
-    return [embeddings_a, embeddings_b]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["temperature"]]

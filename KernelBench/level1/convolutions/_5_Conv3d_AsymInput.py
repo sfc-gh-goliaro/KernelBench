@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -36,26 +34,3 @@ class Model(nn.Module):
         return self.conv3d(x)
 
 # Test code
-
-PARAMETERS = [
-    {"batch_size": 16, "in_channels": 3, "out_channels": 64, "kernel_size": 3, "width": 256, "height": 256, "depth": 10},
-    # Medical imaging: CT scan with few slices
-    {"batch_size": 4, "in_channels": 1, "out_channels": 32, "kernel_size": 3, "width": 512, "height": 512, "depth": 16},
-    # Video classification: short clip
-    {"batch_size": 8, "in_channels": 3, "out_channels": 64, "kernel_size": 3, "width": 224, "height": 224, "depth": 8},
-    # SlowFast: slow pathway
-    {"batch_size": 4, "in_channels": 64, "out_channels": 128, "kernel_size": 3, "width": 56, "height": 56, "depth": 4},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "5_Conv3d_AsymInput")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["height"], p["width"], p["depth"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], p["kernel_size"]]

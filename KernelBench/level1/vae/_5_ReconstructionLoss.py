@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,28 +29,3 @@ class Model(nn.Module):
             return F.binary_cross_entropy(x_recon, x, reduction='mean')
         else:
             return F.l1_loss(x_recon, x, reduction='mean')
-
-
-
-PARAMETERS = [
-    {"batch_size": 64, "channels": 3, "height": 256, "width": 256},
-    # SDXL VAE: 1024x1024 image reconstruction
-    {"batch_size": 1, "channels": 3, "height": 1024, "width": 1024},
-    # SD3 VAE: high-resolution reconstruction loss
-    {"batch_size": 2, "channels": 3, "height": 1024, "width": 1024},
-    # Flux VAE: ultra-high resolution support
-    {"batch_size": 1, "channels": 3, "height": 2048, "width": 2048},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("vae", "5_ReconstructionLoss")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    x_recon = DISTRIBUTIONS[dist_name]((p["batch_size"], p["channels"], p["height"], p["width"]), dtype=dtype, device=device)
-    return [x, x_recon]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return ['mse']

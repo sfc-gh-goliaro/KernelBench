@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -29,26 +27,3 @@ class Model(nn.Module):
             return delta * mask / (1 - self.drop_rate)
         else:
             return delta
-
-
-
-PARAMETERS = [
-    # Llama-3.1 8B: attention layer DARE sparsification
-    {"param_shape": (4096, 4096)},
-    # Llama-3.1 70B: large MLP DARE dropout
-    {"param_shape": (8192, 28672)},
-    # Qwen2 7B: intermediate layer DARE merging
-    {"param_shape": (18944, 3584)},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("model_merging", "4_DARE")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    delta = DISTRIBUTIONS[dist_name]((*p["param_shape"]), dtype=dtype, device=device)
-    return [delta]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    return [0.9]

@@ -1,7 +1,5 @@
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from task_params import DISTRIBUTIONS, get_supported_distributions
 import torch
 import torch.nn as nn
 
@@ -37,26 +35,3 @@ class Model(nn.Module):
         return self.conv_transpose3d(x)
 
 # Test code
-
-PARAMETERS = [
-    {"batch_size": 16, "in_channels": 32, "out_channels": 64, "kernel_depth": 3, "kernel_width": 5, "kernel_height": 5, "depth": 64, "width": 64, "height": 64},
-    # I3D: video action recognition decoder with temporal asymmetry
-    {"batch_size": 4, "in_channels": 512, "out_channels": 256, "kernel_depth": 1, "kernel_width": 3, "kernel_height": 3, "depth": 8, "height": 28, "width": 28},
-    # SlowFast: asymmetric temporal upsampling
-    {"batch_size": 8, "in_channels": 256, "out_channels": 128, "kernel_depth": 5, "kernel_width": 3, "kernel_height": 3, "depth": 16, "height": 56, "width": 56},
-    # MedicalNet: 3D CT/MRI segmentation decoder
-    {"batch_size": 2, "in_channels": 128, "out_channels": 64, "kernel_depth": 3, "kernel_width": 5, "kernel_height": 5, "depth": 32, "height": 128, "width": 128},
-]
-
-SUPPORTED_DISTRIBUTIONS = get_supported_distributions("convolutions", "18_ConvTranspose3d_AsymKernel")
-
-def get_inputs(param_idx=0, dist_name=SUPPORTED_DISTRIBUTIONS[0], dtype=torch.float32, device="cuda"):
-    assert dist_name in SUPPORTED_DISTRIBUTIONS, f"Distribution {dist_name} not supported"
-    assert param_idx < len(PARAMETERS), f"Parameter index {param_idx} out of range"
-    p = PARAMETERS[param_idx]
-    x = DISTRIBUTIONS[dist_name]((p["batch_size"], p["in_channels"], p["depth"], p["width"], p["height"]), dtype=dtype, device=device)
-    return [x]
-
-def get_init_inputs(param_idx=0, dist_name=None, dtype=None, device=None):
-    p = PARAMETERS[param_idx]
-    return [p["in_channels"], p["out_channels"], (p["kernel_depth"], p["kernel_width"], p["kernel_height"])]
