@@ -104,6 +104,9 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     "bigscience/bloom-3b": "KernelBench.level4.4_Bloom",
     "bigscience/bloom-7b1": "KernelBench.level4.4_Bloom",
     "bigscience/bloom": "KernelBench.level4.4_Bloom",
+    # DeepSeek-V2 variants
+    "deepseek-ai/DeepSeek-V2-Lite": "KernelBench.level4.3_Deepseek",
+    "deepseek-ai/DeepSeek-V2": "KernelBench.level4.3_Deepseek",
 }
 
 
@@ -352,7 +355,7 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     # BLOOM-specific: apply_residual_connection_post_layernorm
     apply_residual_post_ln = getattr(hf_config, 'apply_residual_connection_post_layernorm', False)
     
-    return {
+    config = {
         'vocab_size': hf_config.vocab_size,
         'hidden_size': hf_config.hidden_size,
         'num_layers': num_layers,
@@ -369,6 +372,25 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
         'block_size': 16,
         'num_blocks': num_blocks,
     }
+    
+    # DeepSeek-V2 specific parameters (MLA + MoE)
+    if hasattr(hf_config, 'qk_nope_head_dim'):
+        config['qk_nope_head_dim'] = hf_config.qk_nope_head_dim
+        config['qk_rope_head_dim'] = hf_config.qk_rope_head_dim
+        config['v_head_dim'] = hf_config.v_head_dim
+        config['kv_lora_rank'] = hf_config.kv_lora_rank
+        config['q_lora_rank'] = getattr(hf_config, 'q_lora_rank', None)
+        config['moe_intermediate_size'] = getattr(hf_config, 'moe_intermediate_size', intermediate_size)
+        config['n_routed_experts'] = getattr(hf_config, 'n_routed_experts', 64)
+        config['n_shared_experts'] = getattr(hf_config, 'n_shared_experts', 2)
+        config['num_experts_per_tok'] = getattr(hf_config, 'num_experts_per_tok', 6)
+        config['first_k_dense_replace'] = getattr(hf_config, 'first_k_dense_replace', 1)
+        config['routed_scaling_factor'] = getattr(hf_config, 'routed_scaling_factor', 1.0)
+        config['topk_method'] = getattr(hf_config, 'topk_method', 'greedy')
+        config['n_group'] = getattr(hf_config, 'n_group', 1)
+        config['topk_group'] = getattr(hf_config, 'topk_group', 1)
+    
+    return config
 
 
 def _load_truncated_model(model_path: str, hf_config, num_layers: int, dtype, device: str):

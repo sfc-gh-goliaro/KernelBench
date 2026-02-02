@@ -1,33 +1,36 @@
 """
-Multi-Head Latent Attention (MLA) with Paged KV Cache
+Multi-Head Latent Attention (MLA)
 
 Used by: DeepSeek-V2, DeepSeek-V2-Lite, DeepSeek-V3
 
 MLA compresses KV into a low-rank latent space before caching,
 reducing KV cache memory while maintaining model quality.
-Uses paged cache where the compressed latent is stored in blocks.
 
 Key insight: Instead of caching full K,V tensors, we cache the compressed
 latent representation. The K,V are recomputed on-the-fly via up-projections.
 
-This implementation owns its latent cache (per-layer cache pattern from vLLM).
+This implementation uses SDPA (Scaled Dot-Product Attention) for numerical
+alignment with HuggingFace implementations.
+
+Architecture:
+    - Q projection (either direct or low-rank via q_lora_rank)
+    - KV compression (kv_a_proj_with_mqa) to latent space
+    - KV up-projection (kv_b_proj) to full K_nope and V
+    - RoPE applied to rope portions of Q and K
+    - SDPA for attention computation
+    - Output projection
 
 Shapes:
-    q: (batch_size, num_heads, seq_len, qk_head_dim) - projected query
-       where qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
-    kv_c: (batch_size, seq_len, kv_lora_rank) - compressed KV latent (new tokens)
-    k_pe: (batch_size, 1, seq_len, qk_rope_head_dim) - rope-encoded K component
-    Output: (batch_size, num_heads, seq_len, v_head_dim)
+    Input: (batch_size, seq_len, hidden_size)
+    Output: (batch_size, seq_len, hidden_size)
 """
 
-import os
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple
 
 
 # ============================================================================
@@ -37,7 +40,7 @@ from typing import Optional
 @dataclass
 class AttentionMetadata:
     """
-    Metadata for paged attention operations.
+    Metadata for attention operations.
     
     Aligned with vLLM's CommonAttentionMetadata pattern.
     """
@@ -85,317 +88,447 @@ def create_attention_metadata(
     )
 
 
+# ============================================================================
+# RoPE Functions (HuggingFace-compatible complex number approach)
+# ============================================================================
+
+def apply_rotary_emb(
+    xq: torch.Tensor,
+    xk: torch.Tensor,
+    freqs_cis: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply rotary embeddings using complex number multiplication.
+    
+    This matches HuggingFace's exact implementation for numerical alignment.
+    
+    Args:
+        xq: Query tensor (batch, heads, seq, head_dim)
+        xk: Key tensor (batch, heads, seq, head_dim)
+        freqs_cis: Complex frequencies (batch, seq, head_dim//2)
+        
+    Returns:
+        Rotated (xq, xk) with same shapes
+    """
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    
+    # Broadcast to [batch, 1, seq_len, dim // 2]
+    freqs_cis = freqs_cis.unsqueeze(1).to(xq_.device)
+    
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3).type_as(xq)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3).type_as(xk)
+    return xq_out, xk_out
+
+
+class RotaryEmbedding(nn.Module):
+    """
+    Rotary Embedding with YARN scaling.
+    
+    Matches HuggingFace's exact implementation using complex polar representation.
+    
+    Note: inv_freq must stay in float32 for numerical precision, even when the
+    model is converted to bfloat16. This matches HuggingFace's behavior.
+    """
+    
+    def __init__(
+        self,
+        head_dim: int,
+        max_seq_len: int = 163840,
+        base: float = 10000.0,
+        rope_scaling: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__()
+        self.head_dim = head_dim
+        self.max_seq_len = max_seq_len
+        self.base = base
+        self.rope_scaling = rope_scaling
+        
+        # Compute inverse frequencies (keep in float32 for precision)
+        # Store as a regular attribute to avoid dtype conversion when model.to() is called
+        self._inv_freq_float32 = self._compute_inv_freq()
+        # Register a placeholder buffer for device tracking
+        self.register_buffer("inv_freq", self._inv_freq_float32.clone(), persistent=False)
+        
+        # Compute attention scaling (for YARN)
+        self.attention_scaling = self._compute_attention_scaling()
+    
+    def _float_dict_key(self, d, key, default):
+        """Get a key from dict, converting to float if needed."""
+        val = d.get(key, default)
+        return float(val) if val is not None else default
+    
+    def _apply(self, fn):
+        """Override to keep inv_freq in float32 when model dtype changes."""
+        # Apply function to all parameters and buffers
+        super()._apply(fn)
+        
+        # Restore inv_freq from the original float32 values
+        # This preserves precision that would be lost during bfloat16 conversion
+        if hasattr(self, '_inv_freq_float32'):
+            # Get target device from the converted buffer
+            target_device = self.inv_freq.device
+            # Copy the original float32 values to the target device
+            self.inv_freq = self._inv_freq_float32.to(device=target_device)
+            self._inv_freq_float32 = self._inv_freq_float32.to(device=target_device)
+        return self
+    
+    def _compute_inv_freq(self) -> torch.Tensor:
+        """Compute inverse frequencies, with optional YARN scaling."""
+        inv_freq = 1.0 / (
+            self.base ** (torch.arange(0, self.head_dim, 2, dtype=torch.float) / self.head_dim)
+        )
+        
+        if self.rope_scaling is not None:
+            rope_type = self.rope_scaling.get("rope_type", self.rope_scaling.get("type", "default"))
+            if rope_type == "yarn":
+                # YARN scaling
+                factor = float(self.rope_scaling.get("factor", 1.0))
+                original_max_pos = self.rope_scaling.get("original_max_position_embeddings", 4096)
+                beta_fast = float(self.rope_scaling.get("beta_fast", 32))
+                beta_slow = float(self.rope_scaling.get("beta_slow", 1))
+                
+                # Compute YARN-scaled frequencies
+                dim = self.head_dim
+                
+                def find_correction_dim(num_rotations, dim, base, max_position_embeddings):
+                    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+                
+                def find_correction_range(low_rot, high_rot, dim, base, max_position_embeddings):
+                    low = max(math.floor(find_correction_dim(low_rot, dim, base, max_position_embeddings)), 0)
+                    high = min(math.ceil(find_correction_dim(high_rot, dim, base, max_position_embeddings)), dim - 1)
+                    return low, high
+                
+                def linear_ramp_mask(min_val, max_val, dim):
+                    if min_val == max_val:
+                        max_val += 0.001
+                    linear_func = (torch.arange(dim, dtype=torch.float32) - min_val) / (max_val - min_val)
+                    return torch.clamp(linear_func, 0, 1)
+                
+                low, high = find_correction_range(beta_fast, beta_slow, dim, self.base, original_max_pos)
+                inv_freq_mask = 1.0 - linear_ramp_mask(low, high, dim // 2)
+                inv_freq = inv_freq / factor * (1 - inv_freq_mask) + inv_freq * inv_freq_mask
+        
+        return inv_freq
+    
+    def _compute_attention_scaling(self) -> float:
+        """Compute attention scaling factor for YARN.
+        
+        Matches HuggingFace's implementation in modeling_rope_utils.py.
+        """
+        if self.rope_scaling is None:
+            return 1.0
+            
+        rope_type = self.rope_scaling.get("rope_type", self.rope_scaling.get("type", "default"))
+        if rope_type != "yarn":
+            return 1.0
+        
+        # Get attention_factor if explicitly provided
+        attention_factor = self.rope_scaling.get("attention_factor")
+        if attention_factor is not None:
+            return float(attention_factor)
+            
+        # Otherwise compute from mscale/mscale_all_dim
+        mscale = self._float_dict_key(self.rope_scaling, "mscale", None)
+        mscale_all_dim = self._float_dict_key(self.rope_scaling, "mscale_all_dim", None)
+        factor = self._float_dict_key(self.rope_scaling, "factor", 1.0)
+        
+        def get_mscale(scale, mscale_val=1.0):
+            if scale <= 1:
+                return 1.0
+            return 0.1 * mscale_val * math.log(scale) + 1.0
+        
+        # Compute attention_factor as in HuggingFace
+        if mscale is not None and mscale_all_dim is not None:
+            return float(get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dim))
+        elif mscale is not None:
+            return get_mscale(factor, mscale)
+        else:
+            return get_mscale(factor)
+    
+    def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Compute rotary embeddings for given positions.
+        
+        Args:
+            x: Input tensor (batch, seq, dim) - only used for device/dtype
+            position_ids: Position indices (batch, seq)
+            
+        Returns:
+            Complex frequency tensor for rotary embedding
+        """
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
+        position_ids_expanded = position_ids[:, None, :].float()
+        
+        freqs = (inv_freq_expanded.to(x.device) @ position_ids_expanded).transpose(1, 2)
+        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+        freqs_cis = freqs_cis * self.attention_scaling
+        
+        return freqs_cis
+
+
+# ============================================================================
+# RMSNorm
+# ============================================================================
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization.
+    
+    Matches HuggingFace's DeepseekV2RMSNorm implementation exactly.
+    """
+    
+    def __init__(self, hidden_size: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+
+# ============================================================================
+# Multi-Head Latent Attention
+# ============================================================================
+
 class Model(nn.Module):
     """
-    Multi-Head Latent Attention (MLA) with Paged KV Cache.
+    Multi-Head Latent Attention (MLA).
     
-    This implementation stores compressed latent (kv_c concatenated with k_pe)
-    in the cache, similar to vLLM's approach.
+    Complete attention module with:
+    - Q projection (with optional low-rank)
+    - KV compression and up-projection
+    - RoPE (with YARN scaling support)
+    - SDPA for attention computation
+    - Simple KV caching for decode phase
     
-    The cache stores: [kv_c (kv_lora_rank), k_pe (qk_rope_head_dim)]
-    
-    This operator takes:
-    - Pre-projected Q with RoPE already applied to the rope portion
-    - kv_c: compressed KV latent (for up-projection to K_nope and V)
-    - k_pe: the rope-encoded key component
-    
-    The KV up-projections (kv_b_proj) are done inside this operator.
+    Uses SDPA for numerical alignment with HuggingFace implementations.
     """
 
     def __init__(
         self,
+        hidden_size: int,
         num_heads: int,
         qk_nope_head_dim: int,
         qk_rope_head_dim: int,
         v_head_dim: int,
         kv_lora_rank: int,
+        q_lora_rank: Optional[int] = None,
+        max_seq_len: int = 163840,
+        rope_theta: float = 10000.0,
+        rope_scaling: Optional[Dict[str, Any]] = None,
         block_size: int = 16,
         num_blocks: int = 1024,
-        max_seq_len: int = 8192,
-        dropout: float = 0.0,
-        softmax_scale: Optional[float] = None,
+        layer_idx: int = 0,
     ):
         """
-        Initialize MLA with paged latent cache.
+        Initialize Multi-Head Latent Attention.
 
         Args:
+            hidden_size: Model hidden dimension
             num_heads: Number of attention heads
             qk_nope_head_dim: Non-RoPE dimension for Q/K
             qk_rope_head_dim: RoPE dimension for Q/K
             v_head_dim: Value head dimension
-            kv_lora_rank: Rank for KV compression (stored in cache)
-            block_size: Number of tokens per cache block/page
-            num_blocks: Total number of blocks in the cache pool
+            kv_lora_rank: Rank for KV compression (latent dimension)
+            q_lora_rank: Optional rank for Q low-rank projection
             max_seq_len: Maximum sequence length
-            dropout: Attention dropout probability
-            softmax_scale: Optional scaling factor (default: 1/sqrt(qk_head_dim))
+            rope_theta: RoPE theta parameter
+            rope_scaling: Optional YARN scaling config
+            block_size: Block size for paged cache (unused currently)
+            num_blocks: Number of cache blocks (unused currently)
+            layer_idx: Layer index (for debugging)
         """
         super(Model, self).__init__()
+        self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.qk_nope_head_dim = qk_nope_head_dim
         self.qk_rope_head_dim = qk_rope_head_dim
         self.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
         self.v_head_dim = v_head_dim
         self.kv_lora_rank = kv_lora_rank
-        self.block_size = block_size
-        self.num_blocks = num_blocks
-        self.max_seq_len = max_seq_len
-        self.dropout = dropout
+        self.q_lora_rank = q_lora_rank
+        self.layer_idx = layer_idx
+        self.scaling = self.qk_head_dim ** (-0.5)
 
-        # Cache stores: [kv_c, k_pe] = kv_lora_rank + qk_rope_head_dim
-        self.cache_dim = kv_lora_rank + qk_rope_head_dim
-
-        if softmax_scale is not None:
-            self.scale = softmax_scale
+        # Q projection (either direct or low-rank)
+        if q_lora_rank is None:
+            self.q_proj = nn.Linear(hidden_size, num_heads * self.qk_head_dim, bias=False)
         else:
-            self.scale = 1.0 / math.sqrt(self.qk_head_dim)
+            self.q_a_proj = nn.Linear(hidden_size, q_lora_rank, bias=False)
+            self.q_a_layernorm = RMSNorm(q_lora_rank, eps=1e-6)
+            self.q_b_proj = nn.Linear(q_lora_rank, num_heads * self.qk_head_dim, bias=False)
 
-        # KV up-projection: kv_c -> [k_nope, v]
-        # Output: num_heads * (qk_nope_head_dim + v_head_dim)
+        # KV projection with MQA-style fusion (compressed + rope)
+        self.kv_a_proj_with_mqa = nn.Linear(
+            hidden_size,
+            kv_lora_rank + qk_rope_head_dim,
+            bias=False
+        )
+        self.kv_a_layernorm = RMSNorm(kv_lora_rank, eps=1e-6)
+        
+        # KV up-projection: from compressed to full K_nope and V
         self.kv_b_proj = nn.Linear(
             kv_lora_rank,
             num_heads * (qk_nope_head_dim + v_head_dim),
             bias=False
         )
 
-        # Initialize paged latent cache as buffer
-        # Shape: (num_blocks, block_size, cache_dim)
-        self.register_buffer('latent_cache', torch.zeros(
-            num_blocks, block_size, self.cache_dim
-        ))
+        # Output projection
+        self.o_proj = nn.Linear(num_heads * v_head_dim, hidden_size, bias=False)
 
-    def reset_cache(self):
-        """Reset the latent cache to zeros."""
-        self.latent_cache.zero_()
-
-    def _write_to_cache(
-        self,
-        kv_c: torch.Tensor,
-        k_pe: torch.Tensor,
-        slot_mapping: torch.Tensor
-    ) -> None:
-        """
-        Write new latent to cache using slot_mapping.
-        
-        Args:
-            kv_c: (batch_size, seq_len, kv_lora_rank)
-            k_pe: (batch_size, 1, seq_len, qk_rope_head_dim)
-            slot_mapping: (num_tokens,) - absolute positions in cache
-        """
-        if slot_mapping.numel() == 0:
-            return
-        
-        # Flatten kv_c to (num_tokens, kv_lora_rank)
-        kv_c_flat = kv_c.reshape(-1, self.kv_lora_rank)
-        
-        # k_pe is (batch, 1, seq, rope_dim) - squeeze and flatten
-        k_pe_flat = k_pe.squeeze(1).reshape(-1, self.qk_rope_head_dim)
-        
-        # Concatenate to form cache entry
-        cache_entry = torch.cat([kv_c_flat, k_pe_flat], dim=-1)
-        
-        # Compute block indices and offsets
-        block_indices = slot_mapping // self.block_size
-        block_offsets = slot_mapping % self.block_size
-        
-        # Write to cache
-        self.latent_cache[block_indices, block_offsets] = cache_entry
-
-    def _gather_from_cache_truncated(
-        self,
-        block_table: torch.Tensor,
-        context_lens: torch.Tensor,
-        max_context_len: int
-    ) -> tuple:
-        """
-        Gather latent from paged cache, truncated to max_context_len.
-
-        Returns:
-            kv_c_cache: (batch_size, max_context_len, kv_lora_rank)
-            k_pe_cache: (batch_size, 1, max_context_len, qk_rope_head_dim)
-        """
-        batch_size = block_table.shape[0]
-        device = self.latent_cache.device
-        
-        num_blocks_needed = (max_context_len + self.block_size - 1) // self.block_size
-        block_table_truncated = block_table[:, :num_blocks_needed]
-        
-        gathered_blocks = self.latent_cache[block_table_truncated.flatten()]
-        gathered_blocks = gathered_blocks.view(
-            batch_size, num_blocks_needed, self.block_size, self.cache_dim
+        # RoPE with complex representation
+        self.rotary_emb = RotaryEmbedding(
+            head_dim=qk_rope_head_dim,
+            max_seq_len=max_seq_len,
+            base=rope_theta,
+            rope_scaling=rope_scaling,
         )
         
-        gathered = gathered_blocks.view(
-            batch_size, num_blocks_needed * self.block_size, self.cache_dim
-        )
-        gathered = gathered[:, :max_context_len, :]
-        
-        # Split into kv_c and k_pe
-        kv_c_cache = gathered[..., :self.kv_lora_rank]
-        k_pe_cache = gathered[..., self.kv_lora_rank:].unsqueeze(1)  # Add head dim
-        
-        return kv_c_cache, k_pe_cache
-
-    def _prefill_attention(
-        self,
-        q: torch.Tensor,
-        kv_c: torch.Tensor,
-        k_pe: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute attention during prefill phase.
-        
-        Args:
-            q: (batch_size, num_heads, seq_len, qk_head_dim)
-            kv_c: (batch_size, seq_len, kv_lora_rank)
-            k_pe: (batch_size, 1, seq_len, qk_rope_head_dim)
-        """
-        batch_size, num_heads, seq_len, _ = q.shape
-        device = q.device
-        
-        # Up-project kv_c to get k_nope and v
-        kv = self.kv_b_proj(kv_c)  # (batch, seq, num_heads * (qk_nope + v))
-        kv = kv.view(batch_size, seq_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
-        kv = kv.transpose(1, 2)  # (batch, heads, seq, qk_nope + v)
-        
-        k_nope = kv[..., :self.qk_nope_head_dim]
-        v = kv[..., self.qk_nope_head_dim:]
-        
-        # Construct full K by concatenating k_nope and k_pe
-        # k_pe is (batch, 1, seq, rope_dim) - broadcast to all heads
-        k = torch.cat([k_nope, k_pe.expand(-1, num_heads, -1, -1)], dim=-1)
-        
-        # Attention
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        # Causal mask
-        causal_mask = torch.triu(
-            torch.ones(seq_len, seq_len, dtype=torch.bool, device=device),
-            diagonal=1
-        )
-        scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        
-        # Softmax in float32 for numerical stability, then convert to value dtype
-        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32)
-        if self.dropout > 0 and self.training:
-            attn_weights = F.dropout(attn_weights, p=self.dropout)
-        
-        attn_output = torch.matmul(attn_weights.to(v.dtype), v)
-        return attn_output
-
-    def _decode_attention(
-        self,
-        q: torch.Tensor,
-        kv_c: torch.Tensor,
-        k_pe: torch.Tensor,
-        block_table: torch.Tensor,
-        context_lens: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute attention during decode phase.
-        """
-        batch_size, num_heads, seq_len, _ = q.shape
-        device = q.device
-        
-        max_context_len = context_lens.max().item()
-        
-        if max_context_len > 0:
-            kv_c_cache, k_pe_cache = self._gather_from_cache_truncated(
-                block_table, context_lens, max_context_len
-            )
-            
-            # Concatenate cached and new
-            kv_c_full = torch.cat([kv_c_cache, kv_c], dim=1)
-            k_pe_full = torch.cat([k_pe_cache, k_pe], dim=2)
-        else:
-            kv_c_full = kv_c
-            k_pe_full = k_pe
-        
-        total_len = kv_c_full.shape[1]
-        
-        # Up-project to get k_nope and v
-        kv = self.kv_b_proj(kv_c_full)
-        kv = kv.view(batch_size, total_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
-        kv = kv.transpose(1, 2)
-        
-        k_nope = kv[..., :self.qk_nope_head_dim]
-        v = kv[..., self.qk_nope_head_dim:]
-        
-        # Construct full K
-        k = torch.cat([k_nope, k_pe_full.expand(-1, num_heads, -1, -1)], dim=-1)
-        
-        # Attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        # Causal + padding mask
-        query_positions = torch.arange(seq_len, device=device).unsqueeze(0) + context_lens.unsqueeze(1)
-        key_positions = torch.arange(total_len, device=device).unsqueeze(0)
-        
-        causal_mask = key_positions > query_positions.unsqueeze(-1)
-        
-        if max_context_len > 0:
-            cache_positions = torch.arange(max_context_len, device=device).unsqueeze(0)
-            padding_mask = cache_positions >= context_lens.unsqueeze(1)
-            padding_mask = torch.cat([
-                padding_mask,
-                torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
-            ], dim=1)
-            padding_mask = padding_mask.unsqueeze(1).unsqueeze(1)
-        else:
-            padding_mask = torch.zeros(batch_size, 1, 1, total_len, dtype=torch.bool, device=device)
-        
-        causal_mask = causal_mask.unsqueeze(1)
-        attn_mask = causal_mask | padding_mask
-        
-        scores = scores.masked_fill(attn_mask, float('-inf'))
-        
-        # Softmax in float32 for numerical stability, then convert to value dtype
-        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32)
-        if self.dropout > 0 and self.training:
-            attn_weights = F.dropout(attn_weights, p=self.dropout)
-        
-        attn_output = torch.matmul(attn_weights.to(v.dtype), v)
-        return attn_output
+        # Simple KV cache for decode phase
+        self.k_cache = None
+        self.v_cache = None
 
     def forward(
-        self,
-        q: torch.Tensor,
-        kv_c: torch.Tensor,
-        k_pe: torch.Tensor,
+        self, 
+        x: torch.Tensor, 
+        position_ids: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         """
-        Forward pass with paged latent cache and MLA.
-
+        Forward pass with KV caching support.
+        
         Args:
-            q: Projected query with RoPE applied (batch_size, num_heads, seq_len, qk_head_dim)
-            kv_c: Compressed KV latent (batch_size, seq_len, kv_lora_rank)
-            k_pe: RoPE-encoded K component (batch_size, 1, seq_len, qk_rope_head_dim)
+            x: Input tensor (batch_size, seq_len, hidden_size)
+            position_ids: Position indices (batch_size, seq_len)
             attn_metadata: Attention metadata
-
+            
         Returns:
-            Output tensor (batch_size, num_heads, seq_len, v_head_dim)
+            Output tensor (batch_size, seq_len, hidden_size)
         """
-        # Ensure cache is on same device/dtype as inputs
-        if self.latent_cache.device != q.device or self.latent_cache.dtype != q.dtype:
-            # Must use register_buffer to properly update the buffer in the module
-            new_cache = self.latent_cache.to(device=q.device, dtype=q.dtype)
-            self.register_buffer('latent_cache', new_cache, persistent=False)
-        
-        # Write new latent to cache
-        self._write_to_cache(kv_c, k_pe, attn_metadata.slot_mapping)
-        
-        # Choose prefill or decode path
-        if attn_metadata.is_prefill:
-            return self._prefill_attention(q, kv_c, k_pe)
+        batch_size, seq_len, _ = x.shape
+
+        # Q projection (with optional low-rank)
+        if self.q_lora_rank is None:
+            q = self.q_proj(x)
         else:
-            return self._decode_attention(
-                q, kv_c, k_pe,
-                attn_metadata.block_table,
-                attn_metadata.context_lens
-            )
+            q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(x)))
+        
+        q = q.view(batch_size, seq_len, self.num_heads, self.qk_head_dim).transpose(1, 2)
+        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+
+        # KV projection
+        compressed_kv = self.kv_a_proj_with_mqa(x)
+        k_nope_compressed, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        
+        # Up-project compressed KV to get k_nope and v
+        kv_proj = self.kv_b_proj(self.kv_a_layernorm(k_nope_compressed))
+        kv_proj = kv_proj.view(batch_size, seq_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim).transpose(1, 2)
+        k_nope, value_states = torch.split(kv_proj, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+        # Reshape k_pe for RoPE: (batch, 1, seq, rope_dim)
+        k_pe = k_pe.view(batch_size, 1, seq_len, self.qk_rope_head_dim)
+        
+        # Compute rotary embeddings (complex polar representation)
+        freqs_cis = self.rotary_emb(x, position_ids)
+        
+        # Apply RoPE using complex multiplication
+        q_pe, k_pe = apply_rotary_emb(q_pe, k_pe, freqs_cis)
+        
+        # Expand k_pe to all heads
+        k_pe = k_pe.expand(*k_nope.shape[:-1], -1)
+        
+        # Concatenate nope and pe components
+        query_states = torch.cat((q_nope, q_pe), dim=-1)
+        key_states = torch.cat((k_nope, k_pe), dim=-1)
+
+        # Handle KV caching for decode phase
+        if attn_metadata.is_prefill:
+            # During prefill, store KV in cache
+            self.k_cache = key_states
+            self.v_cache = value_states
+        else:
+            # During decode, concatenate with cached KV
+            if self.k_cache is not None:
+                key_states = torch.cat([self.k_cache, key_states], dim=2)
+                value_states = torch.cat([self.v_cache, value_states], dim=2)
+            # Update cache with new KV
+            self.k_cache = key_states
+            self.v_cache = value_states
+
+        # Scaled dot-product attention using SDPA for numerical alignment with HuggingFace
+        attn_output = F.scaled_dot_product_attention(
+            query_states,
+            key_states,
+            value_states,
+            scale=self.scaling,
+            is_causal=attn_metadata.is_prefill,  # Causal only during prefill
+        )
+
+        # Reshape and apply output projection
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
+        return self.o_proj(attn_output)
+
+    def reset_cache(self):
+        """Reset this layer's KV cache."""
+        self.k_cache = None
+        self.v_cache = None
 
 
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
+
+def get_inputs():
+    """Generate inputs for benchmarking."""
+    batch_size = 1
+    seq_len = 512
+    hidden_size = 2048
+    num_heads = 16
+    qk_nope_head_dim = 128
+    qk_rope_head_dim = 64
+    v_head_dim = 128
+    kv_lora_rank = 512
+    
+    device = "cuda"
+    dtype = torch.bfloat16
+    
+    x = torch.randn(batch_size, seq_len, hidden_size, device=device, dtype=dtype)
+    position_ids = torch.arange(seq_len, device=device).unsqueeze(0)
+    
+    block_table = torch.arange(64, device=device, dtype=torch.long).unsqueeze(0)
+    context_lens = torch.zeros(batch_size, dtype=torch.long, device=device)
+    seq_lens = torch.full((batch_size,), seq_len, dtype=torch.long, device=device)
+    
+    attn_metadata = create_attention_metadata(
+        batch_size=batch_size,
+        seq_lens=seq_lens,
+        context_lens=context_lens,
+        block_table=block_table,
+        block_size=16,
+        device=device,
+    )
+    
+    return [x, position_ids, attn_metadata]
+
+
+def get_init_inputs():
+    """Get initialization parameters for MLA."""
+    return {
+        "hidden_size": 2048,
+        "num_heads": 16,
+        "qk_nope_head_dim": 128,
+        "qk_rope_head_dim": 64,
+        "v_head_dim": 128,
+        "kv_lora_rank": 512,
+        "q_lora_rank": None,
+        "max_seq_len": 8192,
+        "rope_theta": 10000.0,
+        "rope_scaling": None,
+        "block_size": 16,
+        "num_blocks": 1024,
+        "layer_idx": 0,
+    }
