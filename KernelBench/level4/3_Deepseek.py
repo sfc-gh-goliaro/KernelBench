@@ -34,6 +34,7 @@ from ..level1.attention._5_MultiHeadLatentAttention import (
     AttentionMetadata,
     create_attention_metadata,
 )
+from ..level1.moe._6_SharedFusedMoE import Model as SharedFusedMoE
 
 
 # ============================================================================
@@ -44,158 +45,6 @@ VARIANTS: Dict[str, str] = {
     "Lite": "deepseek-ai/DeepSeek-V2-Lite",
     "V2": "deepseek-ai/DeepSeek-V2",
 }
-
-
-# ============================================================================
-# MoE Components
-# ============================================================================
-
-class DeepseekExpertMLP(nn.Module):
-    """Single expert MLP with SwiGLU activation."""
-    
-    def __init__(self, hidden_size: int, intermediate_size: int):
-        super().__init__()
-        self.gate_proj = Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = Linear(intermediate_size, hidden_size, bias=False)
-        self.swish = Swish()
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(self.swish(self.gate_proj(x)) * self.up_proj(x))
-
-
-class DeepseekMoE(nn.Module):
-    """Mixture of Experts layer with shared experts."""
-    
-    def __init__(
-        self,
-        hidden_size: int,
-        moe_intermediate_size: int,
-        n_routed_experts: int,
-        n_shared_experts: int,
-        num_experts_per_tok: int,
-        routed_scaling_factor: float = 1.0,
-        topk_method: str = "greedy",
-        n_group: int = 1,
-        topk_group: int = 1,
-    ):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.n_routed_experts = n_routed_experts
-        self.n_shared_experts = n_shared_experts
-        self.num_experts_per_tok = num_experts_per_tok
-        self.routed_scaling_factor = routed_scaling_factor
-        self.topk_method = topk_method
-        self.n_group = n_group
-        self.topk_group = topk_group
-        
-        # Routed experts as ModuleList (matches HF checkpoint path: mlp.experts.0, mlp.experts.1, ...)
-        self.experts = nn.ModuleList([
-            DeepseekExpertMLP(hidden_size, moe_intermediate_size)
-            for _ in range(n_routed_experts)
-        ])
-        
-        # Router gate
-        self.gate = Linear(hidden_size, n_routed_experts, bias=False)
-        
-        # Shared experts (if any)
-        if n_shared_experts is not None and n_shared_experts > 0:
-            shared_intermediate_size = moe_intermediate_size * n_shared_experts
-            self.shared_experts = SwiGLUMLP(hidden_size, shared_intermediate_size)
-        else:
-            self.shared_experts = None
-    
-    def route_tokens_to_experts(
-        self,
-        router_logits: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Route tokens to experts.
-        
-        Args:
-            router_logits: (batch * seq, num_experts) raw routing scores
-            
-        Returns:
-            topk_idx: (batch * seq, top_k) expert indices
-            topk_weight: (batch * seq, top_k) expert weights
-        """
-        num_tokens = router_logits.shape[0]
-        router_probs = router_logits.softmax(dim=-1, dtype=torch.float32)
-        
-        if self.topk_method == "greedy":
-            topk_weight, topk_idx = torch.topk(router_probs, k=self.num_experts_per_tok, dim=-1, sorted=False)
-        elif self.topk_method == "group_limited_greedy":
-            group_scores = router_probs.view(num_tokens, self.n_group, -1).max(dim=-1).values
-            group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
-            group_mask = torch.zeros_like(group_scores)
-            group_mask.scatter_(1, group_idx, 1)
-            score_mask = (
-                group_mask.unsqueeze(-1)
-                .expand(num_tokens, self.n_group, self.n_routed_experts // self.n_group)
-                .reshape(num_tokens, -1)
-            )
-            tmp_scores = router_probs.masked_fill(~score_mask.bool(), 0.0)
-            topk_weight, topk_idx = torch.topk(tmp_scores, k=self.num_experts_per_tok, dim=-1, sorted=False)
-        else:
-            # Default to greedy
-            topk_weight, topk_idx = torch.topk(router_probs, k=self.num_experts_per_tok, dim=-1, sorted=False)
-        
-        topk_weight = topk_weight * self.routed_scaling_factor
-        return topk_idx, topk_weight
-    
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through MoE layer.
-        
-        Args:
-            hidden_states: (batch, seq, hidden_size)
-            
-        Returns:
-            Output tensor (batch, seq, hidden_size)
-        """
-        batch_size, seq_len, hidden_size = hidden_states.shape
-        residuals = hidden_states
-        
-        # Compute router logits
-        router_logits = F.linear(
-            hidden_states.view(-1, hidden_size).float(),
-            self.gate.weight.float()
-        )
-        
-        # Route tokens
-        topk_indices, topk_weights = self.route_tokens_to_experts(router_logits)
-        
-        # Process through routed experts
-        hidden_flat = hidden_states.view(-1, hidden_size)
-        final_hidden_states = torch.zeros_like(hidden_flat)
-        
-        with torch.no_grad():
-            expert_mask = F.one_hot(topk_indices, num_classes=self.n_routed_experts)
-            expert_mask = expert_mask.permute(2, 1, 0)  # (num_experts, top_k, num_tokens)
-            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
-        
-        for expert_idx in expert_hit:
-            expert_idx = expert_idx[0].item()
-            if expert_idx >= self.n_routed_experts:
-                continue
-            
-            top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
-            current_state = hidden_flat[token_idx]
-            
-            # Process through expert MLP
-            current_hidden_states = self.experts[expert_idx](current_state)
-            
-            # Apply expert weights (in float32 for precision)
-            weighted = current_hidden_states.float() * topk_weights[token_idx, top_k_pos, None]
-            final_hidden_states.index_add_(0, token_idx, weighted.to(final_hidden_states.dtype))
-        
-        hidden_states = final_hidden_states.view(batch_size, seq_len, hidden_size)
-        
-        # Add shared expert output
-        if self.shared_experts is not None:
-            hidden_states = hidden_states + self.shared_experts(residuals)
-        
-        return hidden_states
 
 
 # ============================================================================
@@ -272,12 +121,12 @@ class DeepseekDecoderLayer(nn.Module):
         
         # Use MoE for layers >= first_k_dense_replace, otherwise dense MLP
         if layer_idx >= first_k_dense_replace:
-            self.mlp = DeepseekMoE(
+            self.mlp = SharedFusedMoE(
                 hidden_size=hidden_size,
-                moe_intermediate_size=moe_intermediate_size,
-                n_routed_experts=n_routed_experts,
+                intermediate_size=moe_intermediate_size,
+                num_experts=n_routed_experts,
+                top_k=num_experts_per_tok,
                 n_shared_experts=n_shared_experts,
-                num_experts_per_tok=num_experts_per_tok,
                 routed_scaling_factor=routed_scaling_factor,
                 topk_method=topk_method,
                 n_group=n_group,
@@ -327,6 +176,7 @@ class Model(nn.Module):
     Uses level1 operators:
     - RMSNorm (with learnable_weight=True, dim=-1)
     - MultiHeadLatentAttention (with paged KV cache)
+    - SharedFusedMoE (for MoE layers with shared experts)
     - Linear
     - Swish
     """
