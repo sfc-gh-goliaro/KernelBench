@@ -320,18 +320,13 @@ For reference, these 21 operators ARE currently imported and used in level4 mode
 | `_8_TreeExpansion.py` | TreeExpansion | Tree expansion |
 | `_9_TreePruning.py` | TreePruning | Tree pruning |
 
-### ssm/ (8 operators not used)
+### ssm/ (3 operators not used)
 
 | File | Operator Name | Description |
 |------|---------------|-------------|
-| `_1_SelectiveScan.py` | SelectiveScan | Selective scan for Mamba |
-| `_2_Mamba2_SSD.py` | Mamba2_SSD | Mamba-2 SSD |
-| `_3_MambaConv1d.py` | MambaConv1d | Mamba 1D conv |
-| `_4_WKV_RWKV.py` | WKV_RWKV | WKV computation for RWKV |
-| `_5_GLA_Recurrence.py` | GLA_Recurrence | GLA recurrence |
-| `_6_Retention.py` | Retention | RetNet retention |
-| `_7_MambaMixer.py` | MambaMixer | Mamba mixer |
-| `_8_SSMStateUpdate.py` | SSMStateUpdate | SSM state update |
+| `_7_WKV_RWKV.py` | WKV_RWKV | WKV computation for RWKV |
+| `_8_GLA_Recurrence.py` | GLA_Recurrence | GLA recurrence |
+| `_9_Retention.py` | Retention | RetNet retention |
 
 ### tts/ (8 operators not used)
 

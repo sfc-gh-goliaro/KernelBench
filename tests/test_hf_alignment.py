@@ -47,6 +47,8 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'KernelBench'))
 transformers = pytest.importorskip("transformers")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+import json
+import re
 
 # Configuration
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -107,6 +109,16 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     # DeepSeek-V2 variants
     "deepseek-ai/DeepSeek-V2-Lite": "KernelBench.level4.3_Deepseek",
     "deepseek-ai/DeepSeek-V2": "KernelBench.level4.3_Deepseek",
+    # Mamba-2 variants
+    "mistralai/Mamba-Codestral-7B-v0.1": "KernelBench.level4.5_Mamba2",
+    # Mamba-1 variants (generic Mamba-1 and Falcon Mamba)
+    "tiiuae/falcon-mamba-7b": "KernelBench.level4.28_Mamba1",
+    "tiiuae/falcon-mamba-7b-instruct": "KernelBench.level4.28_Mamba1",
+    "state-spaces/mamba-2.8b-slimpj": "KernelBench.level4.28_Mamba1",
+    "state-spaces/mamba-1.4b-hf": "KernelBench.level4.28_Mamba1",
+    "state-spaces/mamba-790m-hf": "KernelBench.level4.28_Mamba1",
+    "state-spaces/mamba-370m-hf": "KernelBench.level4.28_Mamba1",
+    "state-spaces/mamba-130m-hf": "KernelBench.level4.28_Mamba1",
 }
 
 
@@ -215,12 +227,20 @@ def _normalize_key(key: str) -> str:
     KernelBench models wrap primitives in extra modules:
     - LayerNorm wrapper: .ln.weight -> .weight
     - Linear wrapper: .linear.weight -> .weight
-    - RMSNorm wrapper: .norm.weight -> .weight
+    - RMSNorm wrapper (for non-Mamba2): .norm.weight -> .weight
+    - Conv1d wrapper: .conv1d.conv1d. -> .conv1d.
     
     This allows matching KB keys to HF keys despite structural differences.
     """
     # Remove common wrapper suffixes
-    wrappers = ['.ln.', '.linear.', '.norm.']
+    # Note: Order matters. Handle conv1d wrapping specially to avoid
+    # colliding with Mamba2's .norm. (which is MambaRMSNormGated, a real submodule)
+    
+    # KB wraps nn.Conv1d inside a level1 Conv1d module:
+    # KB: .conv1d.conv1d.weight -> HF: .conv1d.weight
+    key = key.replace('.conv1d.conv1d.', '.conv1d.')
+    
+    wrappers = ['.ln.', '.linear.']
     for wrapper in wrappers:
         key = key.replace(wrapper, '.')
     return key
@@ -239,12 +259,12 @@ def copy_weights(hf_model, kb_model, num_layers: int) -> None:
     hf_state = hf_model.state_dict()
     kb_state = kb_model.state_dict()
     
-    # Detect HF model prefix (e.g., "model." for Llama, "transformer." for Falcon)
+    # Detect HF model prefix (e.g., "model." for Llama, "transformer." for Falcon, "backbone." for Mamba2)
     hf_prefix = ""
     for hf_key in hf_state.keys():
         if "." in hf_key:
             potential_prefix = hf_key.split(".")[0] + "."
-            if potential_prefix in ["model.", "transformer."]:
+            if potential_prefix in ["model.", "transformer.", "backbone."]:
                 hf_prefix = potential_prefix
                 break
     
@@ -294,6 +314,118 @@ def copy_weights(hf_model, kb_model, num_layers: int) -> None:
     kb_model.load_state_dict(kb_state)
 
 
+def _is_mamba2_model(model_name: str) -> bool:
+    """Check if a model is a Mamba2 (SSM) model."""
+    return "Mamba" in model_name and "Codestral" in model_name
+
+
+def _is_mamba1_model(model_name: str) -> bool:
+    """Check if a model is a Mamba-1 model (generic or Falcon Mamba)."""
+    return "falcon-mamba" in model_name.lower() or "state-spaces/mamba" in model_name.lower()
+
+
+def _is_ssm_model(model_name: str) -> bool:
+    """Check if a model is any SSM model (Mamba-1 or Mamba-2)."""
+    return _is_mamba2_model(model_name) or _is_mamba1_model(model_name)
+
+
+def _fix_mamba2_config_json(model_path: str) -> None:
+    """
+    Fix the Infinity issue in Mamba-Codestral config.json.
+    
+    The mistralai/Mamba-Codestral-7B-v0.1 config.json contains bare Infinity
+    (not a valid JSON value). We need to replace it with a valid representation.
+    """
+    config_path = os.path.join(model_path, "config.json")
+    if not os.path.exists(config_path):
+        return
+    with open(config_path, "r") as f:
+        content = f.read()
+    if "Infinity" in content:
+        # Replace bare Infinity with a very large float (Python will parse this)
+        fixed_content = content.replace("Infinity", "1e308")
+        with open(config_path, "w") as f:
+            f.write(fixed_content)
+
+
+def _create_kb_mamba2_config(hf_config) -> dict:
+    """Create KernelBench config dict for Mamba2 models."""
+    # Convert time_step_limit: handle the fixed Infinity -> 1e308
+    time_step_limit = getattr(hf_config, 'time_step_limit', (0.0, float("inf")))
+    if isinstance(time_step_limit, list):
+        time_step_limit = tuple(time_step_limit)
+    # Ensure any very large values become inf for consistency
+    time_step_limit = tuple(
+        float("inf") if v > 1e300 else v for v in time_step_limit
+    )
+    
+    time_step_rank = getattr(hf_config, 'time_step_rank', 'auto')
+    if time_step_rank == 'auto':
+        import math
+        time_step_rank = math.ceil(hf_config.hidden_size / 16)
+    
+    return {
+        'vocab_size': hf_config.vocab_size,
+        'hidden_size': hf_config.hidden_size,
+        'num_hidden_layers': hf_config.num_hidden_layers,
+        'num_heads': hf_config.num_heads,
+        'head_dim': hf_config.head_dim,
+        'state_size': hf_config.state_size,
+        'expand': hf_config.expand,
+        'conv_kernel': hf_config.conv_kernel,
+        'n_groups': hf_config.n_groups,
+        'chunk_size': getattr(hf_config, 'chunk_size', 256),
+        'use_bias': getattr(hf_config, 'use_bias', False),
+        'use_conv_bias': getattr(hf_config, 'use_conv_bias', True),
+        'time_step_limit': time_step_limit,
+        'time_step_rank': time_step_rank,
+        'layer_norm_epsilon': getattr(hf_config, 'layer_norm_epsilon', 1e-5),
+        'residual_in_fp32': getattr(hf_config, 'residual_in_fp32', True),
+        'tie_word_embeddings': getattr(hf_config, 'tie_word_embeddings', False),
+    }
+
+
+def _create_kb_mamba1_config(hf_config) -> dict:
+    """Create KernelBench config dict for Mamba-1 models (generic and Falcon Mamba).
+    
+    Uses the HF config's architectures field to determine whether to enable
+    mixer RMS normalization (Falcon Mamba variant).
+    """
+    time_step_rank = getattr(hf_config, 'time_step_rank', 'auto')
+    if time_step_rank == 'auto':
+        import math
+        time_step_rank = math.ceil(hf_config.hidden_size / 16)
+
+    # Determine if this is a Falcon Mamba variant by checking architectures
+    architectures = getattr(hf_config, 'architectures', []) or []
+    is_falcon_mamba = any('FalconMamba' in arch for arch in architectures)
+
+    # Compute intermediate_size: Falcon Mamba has it explicitly,
+    # generic Mamba-1 computes it from expand * hidden_size
+    intermediate_size = getattr(hf_config, 'intermediate_size', None)
+    if intermediate_size is None:
+        expand = getattr(hf_config, 'expand', 2)
+        intermediate_size = int(expand * hf_config.hidden_size)
+
+    return {
+        'vocab_size': hf_config.vocab_size,
+        'hidden_size': hf_config.hidden_size,
+        'num_hidden_layers': hf_config.num_hidden_layers,
+        'intermediate_size': intermediate_size,
+        'state_size': hf_config.state_size,
+        'expand': getattr(hf_config, 'expand', 2),
+        'conv_kernel': hf_config.conv_kernel,
+        'use_bias': getattr(hf_config, 'use_bias', False),
+        'use_conv_bias': getattr(hf_config, 'use_conv_bias', True),
+        'time_step_rank': time_step_rank,
+        'use_mixer_rms_norm': is_falcon_mamba,
+        'mixer_rms_eps': getattr(hf_config, 'mixer_rms_eps', 1e-6),
+        'layer_norm_epsilon': getattr(hf_config, 'layer_norm_epsilon', 1e-5),
+        'residual_in_fp32': getattr(hf_config, 'residual_in_fp32', True),
+        'tie_word_embeddings': getattr(hf_config, 'tie_word_embeddings', False),
+    }
+
+
 def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     """Create KernelBench model config from HuggingFace config.
     
@@ -302,7 +434,13 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     - Falcon: ffn_hidden_size (or 4*hidden_size), layer_norm_epsilon
     - Mistral: intermediate_size, rms_norm_eps
     - BLOOM: n_inner (or 4*hidden), layer_norm_epsilon, n_layer, n_head
+    - Mamba2: num_heads, head_dim, state_size, expand, conv_kernel, n_groups
     """
+    # Check if this is an SSM model
+    if getattr(hf_config, 'model_type', None) == 'mamba2':
+        return _create_kb_mamba2_config(hf_config)
+    if getattr(hf_config, 'model_type', None) in ('falcon_mamba', 'mamba'):
+        return _create_kb_mamba1_config(hf_config)
     # Get rope_scaling if available (not used by BLOOM which uses ALiBi)
     rope_scaling = getattr(hf_config, 'rope_scaling', None)
     
@@ -570,6 +708,7 @@ def _load_truncated_model(model_path: str, hf_config, num_layers: int, dtype, de
                 "transformer.word_embeddings.weight",
                 "model.embed_tokens.weight",
                 "word_embeddings.weight",
+                "backbone.embeddings.weight",
             ],
         }
         resolved_keys = set()
@@ -608,11 +747,41 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     
     print(f"\nLoading models from {model_name}...")
     
+    is_mamba2 = _is_mamba2_model(model_name)
+    is_mamba1 = _is_mamba1_model(model_name)
+    is_ssm = is_mamba2 or is_mamba1
+    
+    # SSM models need snapshot_download for local path loading
+    if is_ssm:
+        model_path = snapshot_download(
+            model_name,
+            allow_patterns=[
+                "*.safetensors", "*.safetensors.index.json",
+                "pytorch_model*.bin", "pytorch_model.bin.index.json",
+                "*.json",
+                "tokenizer*",  # Mamba models need tokenizer files
+            ],
+        )
+        # Mamba2 config.json has bare Infinity that needs fixing
+        if is_mamba2:
+            _fix_mamba2_config_json(model_path)
+    
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-        
-    hf_config = AutoConfig.from_pretrained(model_name)
+    
+    if is_ssm:
+        hf_config = AutoConfig.from_pretrained(model_path)
+        # Fix time_step_limit: convert 1e308 back to inf (original was Infinity in JSON).
+        # bf16 torch.clamp can handle inf but NOT 1e308 (exceeds bf16 max of 3.4e38).
+        if hasattr(hf_config, 'time_step_limit'):
+            tsl = hf_config.time_step_limit
+            if isinstance(tsl, (list, tuple)):
+                hf_config.time_step_limit = tuple(
+                    float("inf") if v > 1e300 else v for v in tsl
+                )
+    else:
+        hf_config = AutoConfig.from_pretrained(model_name)
     
     # Get total layers (handle different naming conventions)
     total_layers = getattr(hf_config, 'num_hidden_layers', None)
@@ -639,44 +808,52 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         if hasattr(hf_config, 'n_layer'):
             hf_config.n_layer = num_layers
         
-        # Download checkpoint files (try safetensors first, fall back to .bin)
-        # We download both formats and let the loading function choose
-        model_path = snapshot_download(
-            model_name,
-            allow_patterns=[
-                "*.safetensors", "*.safetensors.index.json",  # Preferred format
-                "pytorch_model*.bin", "pytorch_model.bin.index.json",  # Fallback format
-                "*.json",  # Config files
-            ],
-        )
+        # Download checkpoint files if not already downloaded (SSM models already downloaded)
+        if not is_ssm:
+            model_path = snapshot_download(
+                model_name,
+                allow_patterns=[
+                    "*.safetensors", "*.safetensors.index.json",  # Preferred format
+                    "pytorch_model*.bin", "pytorch_model.bin.index.json",  # Fallback format
+                    "*.json",  # Config files
+                ],
+            )
         
         # Create and load model efficiently (no random init, only needed shards)
         hf_model = _load_truncated_model(model_path, hf_config, num_layers, DTYPE, DEVICE)
         hf_model.eval()
     else:
-        # Full model - use standard loading
-        hf_model = AutoModelForCausalLM.from_pretrained(
-            model_name, 
-            torch_dtype=DTYPE, 
-            device_map=DEVICE,
-            # Use default attention (SDPA when available) for better alignment with KB's SDPA
-        )
+        if is_ssm:
+            # Load from local path for SSM models, using fixed config
+            # (Mamba2 config.json has 1e308 which exceeds bf16 max; pass fixed config with inf)
+            hf_model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                config=hf_config,
+                torch_dtype=DTYPE,
+                device_map=DEVICE,
+            )
+        else:
+            # Full model - use standard loading
+            hf_model = AutoModelForCausalLM.from_pretrained(
+                model_name, 
+                torch_dtype=DTYPE, 
+                device_map=DEVICE,
+            )
         hf_model.eval()
     
-    # Calculate num_blocks needed for testing (per-layer KV cache)
-    # Each layer has its own KV cache with num_blocks blocks
-    # We need enough blocks to hold max_seq_len tokens per sequence
-    max_seq_len = 4096  # Maximum sequence length for tests
-    block_size = 16
-    max_batch_size = 2  # Maximum batch size for tests
-    # Blocks per sequence = ceil(max_seq_len / block_size)
-    # Total blocks = blocks_per_seq * max_batch_size * safety_margin
-    blocks_per_seq = (max_seq_len + block_size - 1) // block_size
-    num_blocks = blocks_per_seq * max_batch_size * 2  # 2x safety margin
+    # Create KB config 
+    kb_config = create_kb_model_from_hf_config(hf_config)
     
-    # Create KB config with the number of layers we're using
-    kb_config = create_kb_model_from_hf_config(hf_config, num_blocks)
-    kb_config['num_layers'] = num_layers  # Ensure correct layer count
+    if is_ssm:
+        kb_config['num_hidden_layers'] = num_layers
+    else:
+        # Calculate num_blocks needed for testing (per-layer KV cache)
+        max_seq_len = 4096
+        block_size = 16
+        max_batch_size = 2
+        blocks_per_seq = (max_seq_len + block_size - 1) // block_size
+        num_blocks = blocks_per_seq * max_batch_size * 2
+        kb_config['num_layers'] = num_layers
     
     kb_model, kb_module = load_kernelbench_model(model_name, kb_config)
     kb_model = kb_model.to(device=DEVICE, dtype=DTYPE)
@@ -685,8 +862,13 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     copy_weights(hf_model, kb_model, num_layers)
     kb_model.eval()
     
-    print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
-          f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
+    if is_ssm:
+        heads_info = f"{kb_config.get('num_heads', 'N/A')} heads" if is_mamba2 else f"d_inner={kb_config.get('intermediate_size', 'N/A')}"
+        print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
+              f"{heads_info} (SSM)")
+    else:
+        print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
+              f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
     
     return hf_model, kb_model, tokenizer, kb_config, kb_module
 
@@ -731,6 +913,8 @@ def test_prefill_alignment(loaded_models):
     """
     (hf_model, kb_model, tokenizer, kb_config, kb_module), model_name, max_layers = loaded_models
     
+    is_ssm = _is_ssm_model(model_name)
+    
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
     print(f"Testing Prefill Alignment for {model_name}{layers_info}")
@@ -741,9 +925,12 @@ def test_prefill_alignment(loaded_models):
         input_ids = encoded['input_ids']
         batch_size, seq_len = input_ids.shape
         
-        # Allocate block table
-        max_blocks = (seq_len + kb_config['block_size'] - 1) // kb_config['block_size'] + 10
-        block_table = torch.arange(max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0)
+        # For attention models, allocate block table
+        generate_kwargs = {}
+        if not is_ssm:
+            max_blocks = (seq_len + kb_config['block_size'] - 1) // kb_config['block_size'] + 10
+            block_table = torch.arange(max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0)
+            generate_kwargs['block_table'] = block_table
         
         with torch.no_grad():
             # HuggingFace
@@ -754,14 +941,14 @@ def test_prefill_alignment(loaded_models):
             _, kb_logits_list = kb_model.generate(
                 input_ids, 
                 max_new_tokens=0, 
-                block_table=block_table,
-                return_logits=True
+                return_logits=True,
+                **generate_kwargs,
             )
             kb_logits = kb_logits_list[0]  # Prefill logits
         
         # Compare last position logits using relative tolerance
-        hf_last = hf_logits[:, -1, :]
-        kb_last = kb_logits[:, -1, :]
+        hf_last = hf_logits[:, -1, :].float()
+        kb_last = kb_logits[:, -1, :].float()
         
         # Compute absolute and relative differences
         abs_diff = (hf_last - kb_last).abs()
@@ -823,6 +1010,10 @@ def test_generation(loaded_models):
     """
     (hf_model, kb_model, tokenizer, kb_config, kb_module), model_name, max_layers = loaded_models
     
+    is_mamba2 = _is_mamba2_model(model_name)
+    is_mamba1 = _is_mamba1_model(model_name)
+    is_ssm = is_mamba2 or is_mamba1
+    
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
     print(f"Testing Continuous Batching Generation for {model_name}{layers_info}")
@@ -838,37 +1029,81 @@ def test_generation(loaded_models):
         input_ids = encoded['input_ids']
         batch_size, prompt_len = input_ids.shape
         
-        # Allocate blocks
-        max_seq = prompt_len + num_tokens + 10
-        max_blocks = (max_seq + kb_config['block_size'] - 1) // kb_config['block_size']
-        block_table = torch.arange(max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0)
+        # For attention models, allocate blocks
+        generate_kwargs = {}
+        if not is_ssm:
+            max_seq = prompt_len + num_tokens + 10
+            max_blocks = (max_seq + kb_config['block_size'] - 1) // kb_config['block_size']
+            block_table = torch.arange(max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0)
+            generate_kwargs['block_table'] = block_table
         
         with torch.no_grad():
             # HuggingFace generation (manual loop to match greedy decoding)
-            hf_generated = []
-            hf_out = hf_model(input_ids=input_ids, use_cache=True)
-            hf_past = hf_out.past_key_values
-            hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
-            hf_generated.append(hf_next)
-            
-            for step in range(num_tokens - 1):
-                hf_out = hf_model(
-                    input_ids=hf_next,
-                    past_key_values=hf_past,
-                    use_cache=True,
+            if is_ssm:
+                # For SSM models, use the HF model's cache mechanism
+                if is_mamba2:
+                    from transformers.models.mamba2.modeling_mamba2 import Mamba2Cache as HFSSMCache
+                elif "falcon-mamba" in model_name.lower():
+                    from transformers.models.falcon_mamba.modeling_falcon_mamba import FalconMambaCache as HFSSMCache
+                else:
+                    from transformers.models.mamba.modeling_mamba import MambaCache as HFSSMCache
+                hf_cache = HFSSMCache(
+                    hf_model.backbone.config,
+                    batch_size,
+                    device=input_ids.device,
+                    dtype=DTYPE,
                 )
+                cache_position = torch.arange(0, hf_model.backbone.config.conv_kernel, device=DEVICE)
+                
+                hf_out = hf_model(
+                    input_ids=input_ids,
+                    cache_params=hf_cache,
+                    use_cache=True,
+                    cache_position=cache_position,
+                )
+                hf_generated = []
+                hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                hf_generated.append(hf_next)
+                
+                for step in range(num_tokens - 1):
+                    cache_position = torch.tensor(
+                        [prompt_len + step], device=DEVICE, dtype=torch.long
+                    )
+                    hf_out = hf_model(
+                        input_ids=hf_next,
+                        cache_params=hf_cache,
+                        use_cache=True,
+                        cache_position=cache_position,
+                    )
+                    hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                    hf_generated.append(hf_next)
+                
+                hf_tokens = torch.cat(hf_generated, dim=1)
+            else:
+                hf_generated = []
+                hf_out = hf_model(input_ids=input_ids, use_cache=True)
                 hf_past = hf_out.past_key_values
                 hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
                 hf_generated.append(hf_next)
-            
-            hf_tokens = torch.cat(hf_generated, dim=1)
+                
+                for step in range(num_tokens - 1):
+                    hf_out = hf_model(
+                        input_ids=hf_next,
+                        past_key_values=hf_past,
+                        use_cache=True,
+                    )
+                    hf_past = hf_out.past_key_values
+                    hf_next = hf_out.logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                    hf_generated.append(hf_next)
+                
+                hf_tokens = torch.cat(hf_generated, dim=1)
             
             # KernelBench generation using generate()
             kb_full_seq = kb_model.generate(
                 input_ids,
                 max_new_tokens=num_tokens,
-                block_table=block_table,
-                return_logits=False
+                return_logits=False,
+                **generate_kwargs,
             )
             # Extract only the generated tokens (exclude prompt)
             kb_tokens = kb_full_seq[:, prompt_len:]
@@ -927,9 +1162,20 @@ def _get_hf_components(hf_model):
     Get HF model components in an architecture-agnostic way.
     
     Returns: (embedding_layer, layers_list, layer0_norm, layer0_mlp)
+    For Mamba2: layer0_mlp is None (no separate MLP)
     """
+    # Try Mamba2 structure (Mamba2ForCausalLM)
+    if hasattr(hf_model, 'backbone') and hasattr(hf_model.backbone, 'embeddings'):
+        base = hf_model.backbone
+        layer0 = base.layers[0]
+        return (
+            base.embeddings,
+            base.layers,
+            layer0.norm,
+            None,  # No separate MLP in Mamba2
+        )
     # Try Llama-style structure first (LlamaForCausalLM)
-    if hasattr(hf_model, 'model') and hasattr(hf_model.model, 'embed_tokens'):
+    elif hasattr(hf_model, 'model') and hasattr(hf_model.model, 'embed_tokens'):
         base = hf_model.model
         layer0 = base.layers[0]
         # Handle MoE models (Mixtral uses block_sparse_moe instead of mlp)
@@ -964,8 +1210,17 @@ def _get_kb_components(kb_model):
     
     Returns: (embedding_layer, layers_list, layer0_norm, layer0_mlp)
     """
+    # Try Mamba2-style structure (embeddings + layers)
+    if hasattr(kb_model, 'embeddings') and hasattr(kb_model, 'norm_f'):
+        layer0 = kb_model.layers[0]
+        return (
+            kb_model.embeddings,
+            kb_model.layers,
+            layer0.norm,
+            None,  # No separate MLP in Mamba2
+        )
     # Try Llama-style structure (embed_tokens + layers)
-    if hasattr(kb_model, 'embed_tokens'):
+    elif hasattr(kb_model, 'embed_tokens'):
         layer0 = kb_model.layers[0]
         # Handle MoE models (Mixtral uses block_sparse_moe instead of mlp)
         if hasattr(layer0, 'mlp'):
@@ -1015,7 +1270,10 @@ def test_components(loaded_models):
         pytest.skip(f"Cannot test components for this architecture: {e}")
     
     # Test embeddings
-    test_ids = torch.randint(0, kb_config['vocab_size'], (2, 32), device=DEVICE)
+    vocab_size = kb_config.get('vocab_size', kb_config.get('vocab_size', 32768))
+    hidden_size = kb_config.get('hidden_size', 4096)
+    
+    test_ids = torch.randint(0, vocab_size, (2, 32), device=DEVICE)
     with torch.no_grad():
         hf_emb = hf_embed(test_ids)
         kb_emb = kb_embed(test_ids)
@@ -1025,7 +1283,7 @@ def test_components(loaded_models):
     assert emb_diff < 1e-6
     
     # Test layer norms
-    hidden = torch.randn(2, 32, kb_config['hidden_size'], device=DEVICE, dtype=DTYPE)
+    hidden = torch.randn(2, 32, hidden_size, device=DEVICE, dtype=DTYPE)
     with torch.no_grad():
         hf_norm_out = hf_norm(hidden)
         kb_norm_out = kb_norm(hidden)
