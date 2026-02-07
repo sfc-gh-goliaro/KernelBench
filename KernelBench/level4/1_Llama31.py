@@ -29,10 +29,12 @@ from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.attention._3_GroupedQueryAttention import (
+from ..level1.attention._10_GroupedQueryAttentionMultiBackend import (
     Model as GroupedQueryAttention,
     AttentionMetadata,
     create_attention_metadata,
+    get_available_backends,
+    get_backend_info,
 )
 
 
@@ -58,6 +60,12 @@ class LlamaAttention(nn.Module):
     - Linear for Q/K/V/O projections
     - RotaryEmbedding for position encoding (with optional Llama3 scaling)
     - GroupedQueryAttention for attention with paged KV cache
+    
+    Supports multiple attention backends via attn_backend parameter:
+    - sdpa: PyTorch's scaled_dot_product_attention (default)
+    - flash: Flash Attention 2 (requires flash_attn package)
+    - flashinfer: FlashInfer (requires flashinfer package)
+    - eager: Manual eager implementation (for debugging)
     """
     
     def __init__(
@@ -72,6 +80,7 @@ class LlamaAttention(nn.Module):
         block_size: int = 16,
         num_blocks: int = 1024,
         layer_idx: int = 0,
+        attn_backend: str = "sdpa",
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -79,6 +88,7 @@ class LlamaAttention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.layer_idx = layer_idx
+        self.attn_backend = attn_backend
 
         # Q/K/V/O projections
         self.q_proj = Linear(hidden_size, num_heads * head_dim, bias=False)
@@ -103,6 +113,7 @@ class LlamaAttention(nn.Module):
             block_size=block_size,
             num_blocks=num_blocks,
             max_seq_len=max_seq_len,
+            attn_backend=attn_backend,
         )
 
     def forward(
@@ -152,6 +163,11 @@ class LlamaAttention(nn.Module):
         """Reset this layer's KV cache."""
         self.attn.reset_cache()
 
+    def set_attn_backend(self, backend: str) -> None:
+        """Set the attention backend."""
+        self.attn_backend = backend
+        self.attn.set_attn_backend(backend)
+
 
 class SwiGLUMLP(nn.Module):
     """SwiGLU MLP using level1 operators."""
@@ -186,6 +202,7 @@ class LlamaDecoderLayer(nn.Module):
         block_size: int = 16,
         num_blocks: int = 1024,
         layer_idx: int = 0,
+        attn_backend: str = "sdpa",
     ):
         super().__init__()
         self.layer_idx = layer_idx
@@ -202,6 +219,7 @@ class LlamaDecoderLayer(nn.Module):
             block_size=block_size,
             num_blocks=num_blocks,
             layer_idx=layer_idx,
+            attn_backend=attn_backend,
         )
         self.post_attention_layernorm = RMSNorm(hidden_size, rms_norm_eps, learnable_weight=True, dim=-1)
         self.mlp = SwiGLUMLP(hidden_size, intermediate_size)
@@ -246,9 +264,15 @@ class Model(nn.Module):
     Uses level1 operators:
     - RMSNorm (with learnable_weight=True, dim=-1)
     - RotaryEmbedding (with layout="bhsd")
-    - GroupedQueryAttention (with paged KV cache)
+    - GroupedQueryAttention (with paged KV cache and multi-backend support)
     - Linear
     - Swish
+    
+    Attention Backend Support:
+    - sdpa: PyTorch's scaled_dot_product_attention (default)
+    - flash: Flash Attention 2 (requires flash_attn package)
+    - flashinfer: FlashInfer (requires flashinfer package)
+    - eager: Manual eager implementation (for debugging)
     """
     
     def __init__(
@@ -266,6 +290,7 @@ class Model(nn.Module):
         rms_norm_eps: float = 1e-5,
         block_size: int = 16,
         num_blocks: int = 1024,
+        attn_backend: str = "sdpa",
         **kwargs
     ):
         super().__init__()
@@ -286,6 +311,7 @@ class Model(nn.Module):
         self.rms_norm_eps = rms_norm_eps
         self.block_size = block_size
         self.num_blocks = num_blocks
+        self.attn_backend = attn_backend
         
         # Token embedding
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
@@ -305,6 +331,7 @@ class Model(nn.Module):
                 block_size=block_size,
                 num_blocks=num_blocks,
                 layer_idx=i,
+                attn_backend=attn_backend,
             )
             for i in range(num_layers)
         ])
@@ -346,6 +373,32 @@ class Model(nn.Module):
         """Reset all layer KV caches."""
         for layer in self.layers:
             layer.reset_cache()
+
+    def get_attn_backend(self) -> str:
+        """Get the current attention backend."""
+        return self.attn_backend
+
+    def set_attn_backend(self, backend: str) -> None:
+        """
+        Set the attention backend for all layers.
+        
+        Args:
+            backend: One of "sdpa", "flash", "flashinfer", "eager"
+        """
+        self.attn_backend = backend
+        for layer in self.layers:
+            layer.self_attn.attn.set_attn_backend(backend)
+            layer.self_attn.attn_backend = backend
+
+    @staticmethod
+    def get_available_backends() -> List[str]:
+        """Get list of available attention backends."""
+        return get_available_backends()
+
+    @staticmethod
+    def get_backend_info() -> dict:
+        """Get detailed information about available backends."""
+        return get_backend_info()
 
     def _prefill(
         self,
