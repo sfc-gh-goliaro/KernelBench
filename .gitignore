@@ -13,3 +13,9 @@ cache/*
 _build_cache/
 uv.lock
 CLAUDE.md
+
+# temporary folders/files for agent
+flash-linear-attention/
+transformers/
+vllm/
+test.py

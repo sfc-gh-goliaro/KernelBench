@@ -4,26 +4,27 @@ This document tracks level1 operators that are currently not being imported or u
 
 ## Summary
 
-- **Total level1 operators:** 228
-- **Used in level4:** 21
-- **Not used in level4:** 207
+- **Total level1 operators:** 233
+- **Used in level4:** 37
+- **Not used in level4:** 196
 
 ---
 
 ## Operators Used in Level4
 
-For reference, these 21 operators ARE currently imported and used in level4 models:
+For reference, these 37 operators ARE currently imported and used in level4 models:
 
 | Category | Operators Used |
 |----------|---------------|
-| activations | `_1_ReLU`, `_3_Sigmoid`, `_5_Softmax`, `_7_Swish`, `_8_GELU`, `_11_Softplus` |
-| attention | `_6_ALiBi`, `_7_SlidingWindowAttention` |
+| activations | `_1_ReLU`, `_3_Sigmoid`, `_4_Tanh`, `_5_Softmax`, `_7_Swish`, `_8_GELU`, `_11_Softplus` |
+| attention | `_3_GroupedQueryAttention`, `_4_MultiQueryAttention`, `_5_MultiHeadLatentAttention`, `_6_ALiBi` |
 | convolutions | `_1_Conv2d_Standard` |
-| embeddings | `_1_RotaryEmbedding`, `_3_SinusoidalPosEmbed`, `_4_RelativePositionBias` |
-| matmul | `_1_MatMul` |
-| moe | `_1_TopK_Router` |
-| normalization | `_1_BatchNorm`, `_3_GroupNorm`, `_4_RMSNorm`, `_6_LayerNorm` |
+| embeddings | `_1_RotaryEmbedding`, `_2_Embedding`, `_3_SinusoidalPosEmbed`, `_4_RelativePositionBias` |
+| matmul | `_1_MatMul`, `_10_Linear` |
+| moe | `_3_FusedMoE`, `_6_SharedFusedMoE` |
+| normalization | `_1_BatchNorm`, `_3_GroupNorm`, `_4_RMSNorm`, `_6_LayerNorm`, `_7_RMSNormGated` |
 | pooling | `_2_MaxPool2d`, `_7_AdaptiveAvgPool2d`, `_9_MeanPooling` |
+| ssm | `_1_MambaCausalConv1d`, `_2_MambaCausalConv1dStep`, `_3_Mamba2SSDChunkedScan`, `_4_Mamba2StateUpdateStep`, `_5_Mamba1SelectiveScan`, `_6_Mamba1SSMStep`, `_7_RWKV6NaiveRecurrent`, `_8_RWKV6TokenShift`, `_9_RWKV6LerpLinear` |
 
 ---
 
@@ -320,13 +321,12 @@ For reference, these 21 operators ARE currently imported and used in level4 mode
 | `_8_TreeExpansion.py` | TreeExpansion | Tree expansion |
 | `_9_TreePruning.py` | TreePruning | Tree pruning |
 
-### ssm/ (3 operators not used)
+### ssm/ (2 operators not used)
 
 | File | Operator Name | Description |
 |------|---------------|-------------|
-| `_7_WKV_RWKV.py` | WKV_RWKV | WKV computation for RWKV |
-| `_8_GLA_Recurrence.py` | GLA_Recurrence | GLA recurrence |
-| `_9_Retention.py` | Retention | RetNet retention |
+| `_10_GLA_Recurrence.py` | GLA_Recurrence | GLA recurrence |
+| `_11_Retention.py` | Retention | RetNet retention |
 
 ### tts/ (8 operators not used)
 
@@ -377,7 +377,7 @@ For reference, these 21 operators ARE currently imported and used in level4 mode
 
 - Many level4 models implement their own attention and MLP layers using `nn.Linear` directly rather than importing level1 attention operators. This is because the level1 attention operators are more "complete" (include Q/K/V projections) while level4 models often need custom implementations.
 
-- The SSM operators (Mamba, RWKV, GLA, RetNet) are not used because the level4 SSM models (`5_Mamba2.py`, `6_RWKV6.py`, `7_GLA.py`, `8_RetNet.py`) implement their core computations inline.
+- The Mamba SSM operators are used by `5_Mamba2.py` and `28_Mamba1.py`. The RWKV6 SSM operators are used by `6_RWKV6.py`. The GLA and RetNet SSM operators are not yet used because `7_GLA.py` and `8_RetNet.py` implement their core computations inline.
 
 - The rendering operators (`GaussianSplatting`, `NeRFMLP`, etc.) are not used by `26_3DGS.py` and `27_InstantNGP.py` which implement their rendering logic inline.
 
