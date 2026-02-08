@@ -51,6 +51,13 @@ class Model(nn.Module):
             Delta tensor (B, T, D) where delta[t] = x[t-1] - x[t]
             (with x[-1] = prev_hidden if given, else 0).
         """
+        # Fast path for single-token decode: avoid F.pad allocation
+        if x.shape[1] == 1:
+            if prev_hidden is not None:
+                return (prev_hidden.unsqueeze(1) - x)
+            else:
+                return -x
+
         shifted = F.pad(x, (0, 0, 1, -1))  # shift right, zero-fill position 0
         if prev_hidden is not None:
             shifted[:, 0] = prev_hidden

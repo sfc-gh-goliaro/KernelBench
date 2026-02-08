@@ -558,6 +558,7 @@ class Model(nn.Module):
         input_ids: torch.Tensor,
         cache_params: Optional[RWKV6Cache] = None,
         use_cache: bool = False,
+        num_last_tokens: int = 0,
     ) -> torch.Tensor:
         """
         Forward pass.
@@ -570,9 +571,12 @@ class Model(nn.Module):
             use_cache: Whether to output/save the final recurrent state.
                 Must be True during generation so that the recurrent state
                 is stored in cache_params for subsequent decode steps.
+            num_last_tokens: If > 0, only project the last N hidden states
+                through the LM head (avoids a large matmul during prefill).
+                If 0, project all positions.
 
         Returns:
-            logits: (batch_size, seq_len, vocab_size)
+            logits: (batch_size, seq_len or num_last_tokens, vocab_size)
         """
         hidden_states = self.embeddings(input_ids)
 
@@ -584,6 +588,8 @@ class Model(nn.Module):
             )
 
         hidden_states = self.norm(hidden_states)
+        if num_last_tokens > 0:
+            hidden_states = hidden_states[:, -num_last_tokens:]
         logits = self.lm_head(hidden_states)
         return logits
 
@@ -646,11 +652,14 @@ class Model(nn.Module):
             device=device,
         )
 
-        # Prefill: process all prompt tokens, populating cache
+        # Prefill: process all prompt tokens, populating cache.
+        # Only project the last hidden state through lm_head unless we
+        # need all logits for the caller.
         prefill_logits = self.forward(
             input_ids,
             cache_params=cache_params,
             use_cache=True,
+            num_last_tokens=0 if return_logits else 1,
         )
 
         if max_new_tokens == 0:

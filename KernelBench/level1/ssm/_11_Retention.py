@@ -1,110 +1,135 @@
-import os
-import sys
+"""
+RetNet Retention Naive Recurrent
+
+Used by: RetNet
+
+Naive (sequential) recurrent implementation of the RetNet retention
+mechanism.  The recurrence at each time step is:
+
+    h_t = h_{t-1} * gamma + k_t^T @ v_t
+    o_t = q_t @ h_t
+
+where q, k, v are per-head per-timestep tensors and gamma is a per-head
+fixed decay factor.  In the standard multi-scale retention formulation:
+
+    gamma_h = 1 - 2^{-(5 + h)}   for head index h
+
+so different heads learn at different retention scales.
+
+Shapes:
+    q:       (B, T, H, K)
+    k:       (B, T, H, K)
+    v:       (B, T, H, V)
+    initial_state: (B, H, K, V) or None
+    Output:  (B, T, H, V)
+    final_state: (B, H, K, V) or None
+"""
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import math
+from typing import Optional, Tuple
+
 
 class Model(nn.Module):
     """
-    RetNet Retention
-    
-    Used by: RetNet
-    
-    RetNet retention mechanism with decay matrix. Supports both
-    parallel and recurrent computation modes.
-    
-    Shapes:
-        Input: (batch, seq_len, hidden_size)
-        Output: (batch, seq_len, hidden_size)
+    RetNet naive recurrent retention.
+
+    Matches fla's fused_recurrent_retention semantics exactly.
+    This is a pure-PyTorch reference; production kernels would fuse the loop.
     """
-    
-    def __init__(self, hidden_size: int, num_heads: int = 8, double_v_dim: bool = True):
+
+    def __init__(self, num_heads: int, scale: float = None):
         """
-        Initialize retention.
-        
         Args:
-            hidden_size: Model hidden dimension
-            num_heads: Number of retention heads
-            double_v_dim: Whether to double value dimension
+            num_heads: Number of attention heads (used to compute per-head
+                       decay rates gamma).
+            scale: Scaling factor applied to q at each time step.
+                   If None, defaults to K^{-0.5}.
         """
         super(Model, self).__init__()
-        self.hidden_size = hidden_size
         self.num_heads = num_heads
-        self.head_dim = hidden_size // num_heads
-        self.v_dim = self.head_dim * 2 if double_v_dim else self.head_dim
-        
-        # Projections
-        self.q_proj = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.k_proj = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.v_proj = nn.Linear(hidden_size, num_heads * self.v_dim, bias=False)
-        self.g_proj = nn.Linear(hidden_size, num_heads * self.v_dim, bias=False)
-        self.o_proj = nn.Linear(num_heads * self.v_dim, hidden_size, bias=False)
-        
-        # Per-head decay rates (gamma)
-        # Different heads have different decay rates for multi-scale retention
-        decay_rates = 1 - torch.pow(2, -5 - torch.arange(num_heads, dtype=torch.float))
-        self.register_buffer('decay_rates', decay_rates)
-        
-        self.scale = self.head_dim ** -0.5
-    
-    def _parallel_retention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-        """Parallel retention computation."""
-        batch_size, seq_len, num_heads, head_dim = q.shape
-        
-        # Build decay matrix D[i,j] = gamma^(i-j) for i >= j, 0 otherwise
-        positions = torch.arange(seq_len, device=q.device)
-        decay_mask = positions.unsqueeze(0) - positions.unsqueeze(1)  # (seq, seq)
-        decay_mask = decay_mask.float()
-        
-        # Apply causal mask
-        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=q.device))
-        
-        # Build D matrix for each head
-        D = self.decay_rates.view(1, num_heads, 1, 1) ** decay_mask.unsqueeze(0).unsqueeze(0)
-        D = D * causal_mask  # (1, num_heads, seq, seq)
-        
-        # Retention: (Q @ K^T) * D @ V
-        # Q, K: (batch, seq, heads, head_dim) -> (batch, heads, seq, head_dim)
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-        
-        qk = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # (batch, heads, seq, seq)
-        qk = qk * D  # Apply decay
-        
-        output = torch.matmul(qk, v)  # (batch, heads, seq, v_dim)
-        return output.transpose(1, 2)  # (batch, seq, heads, v_dim)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.scale = scale
+
+        # Per-head decay: gamma_h = 1 - 2^{-(5+h)}
+        # Pre-compute both log_gamma and gamma to avoid repeated exp() calls.
+        gamma = 1 - torch.tensor(2.0).pow(
+            -5.0 - torch.arange(num_heads, dtype=torch.float32)
+        )
+        self.register_buffer("log_gamma", gamma.log())  # (H,)
+        self.register_buffer("gamma", gamma)             # (H,)
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        initial_state: Optional[torch.Tensor] = None,
+        output_final_state: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Retention forward pass (parallel mode).
-        
+        Retention naive recurrent forward pass.
+
         Args:
-            x: Input tensor (batch, seq_len, hidden_size)
-            
+            q: Query tensor (B, T, H, K)
+            k: Key tensor (B, T, H, K)
+            v: Value tensor (B, T, H, V)
+            initial_state: Optional initial hidden state (B, H, K, V)
+            output_final_state: Whether to return the final hidden state
+
         Returns:
-            Output tensor (batch, seq_len, hidden_size)
+            Tuple of (output, final_state) where:
+                output: (B, T, H, V)
+                final_state: (B, H, K, V) or None
         """
-        batch_size, seq_len, _ = x.shape
-        
-        # Projections
-        q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim)
-        k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim)
-        v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.v_dim)
-        g = self.g_proj(x).view(batch_size, seq_len, self.num_heads, self.v_dim)
-        
-        # Parallel retention
-        retention_out = self._parallel_retention(q, k, v)
-        
-        # Apply swish gate
-        output = retention_out * F.silu(g)
-        
-        # Reshape and project output
-        output = output.reshape(batch_size, seq_len, -1)
-        return self.o_proj(output)
+        orig_dtype = q.dtype
+        B, T, H, K = q.shape
+        V = v.shape[-1]
+        scale = self.scale if self.scale is not None else K ** -0.5
+
+        q, k, v = (x.float() for x in (q, k, v))
+
+        # Per-head decay factor (pre-computed buffer)
+        gamma = self.gamma  # (H,)
+
+        h = torch.zeros(B, H, K, V, dtype=torch.float32, device=q.device)
+        if initial_state is not None:
+            h = h + initial_state.float()
+
+        o = torch.zeros(B, T, H, V, dtype=torch.float32, device=q.device)
+
+        for t in range(T):
+            q_t = q[:, t] * scale            # (B, H, K)
+            k_t = k[:, t]                     # (B, H, K)
+            v_t = v[:, t]                     # (B, H, V)
+
+            # Decay and accumulate: h = h * gamma + k^T v
+            # gamma is (H,), broadcast to (1, H, 1, 1)
+            h = h * gamma[None, :, None, None] + k_t.unsqueeze(-1) * v_t.unsqueeze(-2)
+
+            # Output: o = q @ h  -> (B, H, V)
+            o[:, t] = (q_t.unsqueeze(-1) * h).sum(-2)
+
+        ht = h if output_final_state else None
+        return o.to(orig_dtype), ht
 
 
 # ============================================================================
 # Benchmark Configuration
 # ============================================================================
+
+batch_size = 2
+seq_len = 256
+num_heads = 8
+head_k_dim = 64
+head_v_dim = 128
+
+
+def get_inputs():
+    q = torch.randn(batch_size, seq_len, num_heads, head_k_dim)
+    k = torch.randn(batch_size, seq_len, num_heads, head_k_dim)
+    v = torch.randn(batch_size, seq_len, num_heads, head_v_dim)
+    return [q, k, v]
+
+
+def get_init_inputs():
+    return [num_heads]
