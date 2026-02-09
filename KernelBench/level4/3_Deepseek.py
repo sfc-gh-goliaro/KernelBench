@@ -29,11 +29,8 @@ from dataclasses import dataclass
 from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.attention._3_MultiHeadLatentAttention import (
-    Model as MultiHeadLatentAttention,
-    AttentionMetadata,
-    create_attention_metadata,
-)
+from ..level1.attention._1_PagedKVCache import AttentionMetadata, create_attention_metadata
+from ..level1.attention._3_MultiHeadLatentAttention import Model as MultiHeadLatentAttention
 from ..level1.moe._6_SharedFusedMoE import Model as SharedFusedMoE
 
 
