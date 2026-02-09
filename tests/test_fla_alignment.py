@@ -78,7 +78,7 @@ MODEL_CONFIGS = {
     "rwkv6": {
         "hf_model": "fla-hub/rwkv6-7B-finch",
         "fla_import": ("fla.models.rwkv6", "RWKV6Config", "RWKV6ForCausalLM"),
-        "kb_module": "KernelBench.level4.6_RWKV6",
+        "kb_module": "KernelBench.level4.8_RWKV6",
         # RWKV6 uses LayerNorm (not RMSNorm) and doesn't have g_norm_swish_gate,
         # so we disable fuse_norm to use nn.LayerNorm for exact alignment.
         "fuse_norm": False,
@@ -86,7 +86,7 @@ MODEL_CONFIGS = {
     "gla": {
         "hf_model": "fla-hub/gla-2.7B-100B",
         "fla_import": ("fla.models.gla", "GLAConfig", "GLAForCausalLM"),
-        "kb_module": "KernelBench.level4.7_GLA",
+        "kb_module": "KernelBench.level4.9_GLA",
         # GLA checkpoint stores g_norm_swish_gate.weight (fuse_norm=True).
         # KB separates this into RMSNorm + Swish gate; we keep fuse_norm=True
         # so weights load correctly from checkpoint.
@@ -95,7 +95,7 @@ MODEL_CONFIGS = {
     "retnet": {
         "hf_model": "fla-hub/retnet-2.7B-100B",
         "fla_import": ("fla.models.retnet", "RetNetConfig", "RetNetForCausalLM"),
-        "kb_module": "KernelBench.level4.8_RetNet",
+        "kb_module": "KernelBench.level4.10_RetNet",
         # RetNet checkpoint stores g_norm_swish_gate.weight (fuse_norm=True).
         # KB separates this into RMSNorm + Swish gate; we keep fuse_norm=True
         # so weights load correctly from checkpoint.
@@ -162,7 +162,7 @@ NORMALIZERS = {
 
 def _create_rwkv6_kb_model(fla_config, num_layers):
     """Create a KernelBench RWKV6 model from fla config."""
-    kb_module = import_module("KernelBench.level4.6_RWKV6")
+    kb_module = import_module("KernelBench.level4.8_RWKV6")
     return kb_module.Model(
         hidden_size=fla_config.hidden_size,
         num_hidden_layers=num_layers,
@@ -183,7 +183,7 @@ def _create_rwkv6_kb_model(fla_config, num_layers):
 
 def _create_gla_kb_model(fla_config, num_layers):
     """Create a KernelBench GLA model from fla config."""
-    kb_module = import_module("KernelBench.level4.7_GLA")
+    kb_module = import_module("KernelBench.level4.9_GLA")
     return kb_module.Model(
         hidden_size=fla_config.hidden_size,
         num_hidden_layers=num_layers,
@@ -204,7 +204,7 @@ def _create_gla_kb_model(fla_config, num_layers):
 
 def _create_retnet_kb_model(fla_config, num_layers):
     """Create a KernelBench RetNet model from fla config."""
-    kb_module = import_module("KernelBench.level4.8_RetNet")
+    kb_module = import_module("KernelBench.level4.10_RetNet")
     return kb_module.Model(
         hidden_size=fla_config.hidden_size,
         num_hidden_layers=num_layers,
