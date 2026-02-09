@@ -52,6 +52,7 @@ transformers = pytest.importorskip("transformers")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor
 from transformers import T5ForConditionalGeneration, Swinv2ForImageClassification
+from transformers import WhisperForConditionalGeneration, WhisperProcessor
 import json
 import re
 import requests
@@ -111,6 +112,7 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     "openai/whisper-small": "KernelBench.level4.14_Whisper",
     "openai/whisper-base": "KernelBench.level4.14_Whisper",
     "openai/whisper-medium": "KernelBench.level4.14_Whisper",
+    "openai/whisper-large-v2": "KernelBench.level4.14_Whisper",
     "openai/whisper-large-v3": "KernelBench.level4.14_Whisper",
     # BLOOM variants
     "bigscience/bloom-560m": "KernelBench.level4.5_Bloom",
@@ -396,6 +398,44 @@ def _build_swinv2_key_mapping(hf_state, kb_state) -> dict:
     return mapping
 
 
+def _build_whisper_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for Whisper models.
+    
+    HF WhisperForConditionalGeneration uses 'model.' prefix for the backbone:
+      model.encoder.conv1.weight -> encoder.conv1.weight
+      model.encoder.layers.0.self_attn.q_proj.weight -> encoder.layers.0.self_attn.q_proj.weight
+      model.decoder.embed_tokens.weight -> decoder.embed_tokens.weight
+      proj_out.weight -> proj_out.weight (no prefix)
+    
+    KB level1 operator wrappers add extra nesting that must be unwrapped:
+      LayerNorm: .ln.weight/.ln.bias -> .weight/.bias
+      Embedding: .embedding.weight -> .weight
+      Conv1d:    .conv1d.weight/.conv1d.bias -> .weight/.bias
+      Linear:    no extra nesting (weight/bias stored directly)
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        # Unwrap level1 wrapper key nesting
+        unwrapped = kb_key
+        # LayerNorm wrapper: .ln.weight -> .weight, .ln.bias -> .bias
+        unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
+        # Embedding wrapper: .embedding.weight -> .weight
+        unwrapped = unwrapped.replace('.embedding.weight', '.weight')
+        # Conv1d wrapper: .conv1d.weight -> .weight, .conv1d.bias -> .bias
+        unwrapped = unwrapped.replace('.conv1d.weight', '.weight').replace('.conv1d.bias', '.bias')
+        
+        # Try with model. prefix (backbone weights)
+        hf_key = 'model.' + unwrapped
+        if hf_key in hf_state:
+            mapping[kb_key] = hf_key
+        elif unwrapped in hf_state:
+            # proj_out.weight has no prefix
+            mapping[kb_key] = unwrapped
+    
+    return mapping
+
+
 def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> None:
     """
     Copy weights from HuggingFace model to KernelBench model.
@@ -405,6 +445,7 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
     - Falcon: transformer.word_embeddings, transformer.h, transformer.ln_f
     - T5: encoder.block, decoder.block (encoder-decoder)
     - SwinV2: swinv2.embeddings, swinv2.encoder.layers (vision)
+    - Whisper: model.encoder, model.decoder (speech encoder-decoder)
     
     Handles structural differences where KB wraps primitives in extra modules.
     """
@@ -456,6 +497,41 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
                 skipped_buffers += 1
                 continue
             
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
+    if _is_whisper_model(model_name):
+        explicit_mapping = _build_whisper_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            # Skip feature_extractor buffers (mel filterbank, hann window) —
+            # these are computed locally by KB's WhisperFeatureExtractor and
+            # have no counterpart in the HF model weights.
+            if kb_key.startswith('feature_extractor.'):
+                skipped_buffers += 1
+                continue
             if kb_key in explicit_mapping:
                 hf_key = explicit_mapping[kb_key]
                 hf_tensor = hf_state[hf_key]
@@ -559,6 +635,11 @@ def _is_t5_model(model_name: str) -> bool:
 def _is_swinv2_model(model_name: str) -> bool:
     """Check if a model is a SwinV2 image classification model."""
     return "swinv2" in model_name.lower()
+
+
+def _is_whisper_model(model_name: str) -> bool:
+    """Check if a model is a Whisper speech recognition model."""
+    return "whisper" in model_name.lower()
 
 
 def _fix_mamba2_config_json(model_path: str) -> None:
@@ -693,6 +774,24 @@ def _create_kb_swinv2_config(hf_config) -> dict:
     }
 
 
+def _create_kb_whisper_config(hf_config) -> dict:
+    """Create KernelBench config dict for Whisper encoder-decoder models."""
+    return {
+        'd_model': hf_config.d_model,
+        'encoder_attention_heads': hf_config.encoder_attention_heads,
+        'decoder_attention_heads': hf_config.decoder_attention_heads,
+        'encoder_layers': hf_config.encoder_layers,
+        'decoder_layers': hf_config.decoder_layers,
+        'encoder_ffn_dim': hf_config.encoder_ffn_dim,
+        'decoder_ffn_dim': hf_config.decoder_ffn_dim,
+        'vocab_size': hf_config.vocab_size,
+        'num_mel_bins': hf_config.num_mel_bins,
+        'max_source_positions': hf_config.max_source_positions,
+        'max_target_positions': hf_config.max_target_positions,
+        'decoder_start_token_id': getattr(hf_config, 'decoder_start_token_id', 50258),
+    }
+
+
 def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     """Create KernelBench model config from HuggingFace config.
     
@@ -714,6 +813,9 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     # Check if this is a SwinV2 model
     if getattr(hf_config, 'model_type', None) == 'swinv2':
         return _create_kb_swinv2_config(hf_config)
+    # Check if this is a Whisper model
+    if getattr(hf_config, 'model_type', None) == 'whisper':
+        return _create_kb_whisper_config(hf_config)
     # Get rope_scaling if available (not used by BLOOM which uses ALiBi)
     rope_scaling = getattr(hf_config, 'rope_scaling', None)
     
@@ -1025,6 +1127,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     is_ssm = is_mamba2 or is_mamba1
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
+    is_whisper = _is_whisper_model(model_name)
     
     # SSM models need snapshot_download for local path loading
     if is_ssm:
@@ -1041,11 +1144,16 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         if is_mamba2:
             _fix_mamba2_config_json(model_path)
     
-    # Load tokenizer (text models) or image processor (vision models)
+    # Load tokenizer (text models), image processor (vision models), or
+    # whisper processor (speech models)
     tokenizer = None
     image_processor = None
+    whisper_processor = None
     if is_swinv2:
         image_processor = AutoImageProcessor.from_pretrained(model_name)
+    elif is_whisper:
+        whisper_processor = WhisperProcessor.from_pretrained(model_name)
+        tokenizer = whisper_processor.tokenizer
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         if tokenizer.pad_token is None:
@@ -1070,6 +1178,8 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         total_layers = sum(hf_config.depths)
     elif is_t5:
         total_layers = hf_config.num_layers  # T5 uses num_layers
+    elif is_whisper:
+        total_layers = hf_config.encoder_layers  # Use encoder layers as reference
     else:
         total_layers = getattr(hf_config, 'num_hidden_layers', None)
         if total_layers is None:
@@ -1091,6 +1201,17 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
             hf_config.num_layers = num_layers
             hf_config.num_decoder_layers = num_layers
         hf_model = T5ForConditionalGeneration.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+        )
+        hf_model.eval()
+    elif is_whisper:
+        if truncated:
+            hf_config.encoder_layers = num_layers
+            hf_config.decoder_layers = num_layers
+        hf_model = WhisperForConditionalGeneration.from_pretrained(
             model_name,
             config=hf_config,
             torch_dtype=DTYPE,
@@ -1169,6 +1290,9 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     if is_t5:
         kb_config['num_encoder_layers'] = num_layers
         kb_config['num_decoder_layers'] = num_layers
+    elif is_whisper:
+        kb_config['encoder_layers'] = num_layers
+        kb_config['decoder_layers'] = num_layers
     elif is_swinv2:
         if truncated:
             kb_config['depths'] = list(hf_config.depths)
@@ -1193,6 +1317,10 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     if is_t5:
         print(f"Loaded: {num_layers}/{total_layers} layers, d_model={kb_config['d_model']}, "
               f"{kb_config['num_heads']} heads (T5 encoder-decoder)")
+    elif is_whisper:
+        print(f"Loaded: {num_layers}/{total_layers} layers, d_model={kb_config['d_model']}, "
+              f"enc_heads={kb_config['encoder_attention_heads']}, "
+              f"dec_heads={kb_config['decoder_attention_heads']} (Whisper)")
     elif is_swinv2:
         print(f"Loaded: depths={kb_config['depths']}, embed_dim={kb_config['embed_dim']}, "
               f"num_heads={kb_config['num_heads']} (SwinV2)")
@@ -1204,7 +1332,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
               f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
     
-    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor
+    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor
 
 
 # ============================================================================
@@ -1246,11 +1374,12 @@ def test_prefill_alignment(loaded_models):
     For T5: uses text prompts as encoder input, pad token as decoder input.
     For SwinV2: uses random pixel values for image classification.
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor), model_name, max_layers = loaded_models
     
     is_ssm = _is_ssm_model(model_name)
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
+    is_whisper = _is_whisper_model(model_name)
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
@@ -1305,6 +1434,100 @@ def test_prefill_alignment(loaded_models):
             
             assert top_match, f"Top predictions differ: HF={hf_top} vs KB={kb_top}"
             assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    if is_whisper:
+        # Whisper: test with real audio samples from LibriSpeech
+        # HF path: uses WhisperProcessor (official feature extractor)
+        # KB path: uses KB's built-in WhisperFeatureExtractor (level1 MelSpectrogram)
+        assert whisper_processor is not None, "WhisperProcessor required for Whisper"
+        
+        # Load real audio samples (decode manually with soundfile to avoid
+        # torchcodec/ffmpeg dependency)
+        import io
+        import soundfile as sf
+        from datasets import load_dataset, Audio as DatasetsAudio
+        ds = load_dataset(
+            "hf-internal-testing/librispeech_asr_dummy", "clean",
+            split="validation",
+        )
+        # Disable automatic audio decoding (avoids torchcodec requirement)
+        ds = ds.cast_column("audio", DatasetsAudio(decode=False))
+        
+        # Use a few diverse samples
+        test_indices = [0, 1, 2, 3, 4]
+        
+        for idx, sample_idx in enumerate(test_indices):
+            sample = ds[sample_idx]
+            # Manually decode audio with soundfile
+            audio_bytes = sample["audio"]["bytes"]
+            audio_array, sampling_rate = sf.read(io.BytesIO(audio_bytes))
+            
+            # HF path: process audio with the official Whisper feature extractor
+            input_features_hf = whisper_processor.feature_extractor(
+                audio_array, sampling_rate=sampling_rate, return_tensors="pt",
+            ).input_features.to(device=DEVICE, dtype=DTYPE)
+            
+            # KB path: pass raw audio waveform — KB's WhisperFeatureExtractor
+            # (built on level1/audio/_1_MelSpectrogram) handles preprocessing
+            audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).to(device=DEVICE)
+            
+            # Use decoder_start_token_id as the initial decoder input
+            decoder_start_id = hf_model.config.decoder_start_token_id or 50258
+            decoder_input_ids = torch.tensor(
+                [[decoder_start_id]], dtype=torch.long, device=DEVICE,
+            )
+            
+            with torch.no_grad():
+                # HuggingFace: uses HF-preprocessed mel features
+                hf_out = hf_model(
+                    input_features=input_features_hf,
+                    decoder_input_ids=decoder_input_ids,
+                    use_cache=False,
+                )
+                hf_logits = hf_out.logits  # (1, 1, vocab_size)
+                
+                # KernelBench: uses KB's own feature extractor from raw audio
+                kb_logits = kb_model.forward_from_audio(audio_tensor, decoder_input_ids)
+            
+            # Compare last position logits
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = whisper_processor.tokenizer.decode([hf_top])
+            kb_token = whisper_processor.tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < RTOL_MEAN
+            max_ok = max_rel_diff < RTOL_MAX
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            duration_s = len(audio_array) / sampling_rate
+            transcript_preview = sample.get("text", "N/A")[:40]
+            print(f"\n  [{idx}] {status}: sample {sample_idx} ({duration_s:.1f}s, '{transcript_preview}...')")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={RTOL_MAX}), mean={mean_rel_diff:.2e} (limit={RTOL_MEAN})")
+            print(f"      HF next: '{hf_token}' (id={hf_top}) | KB next: '{kb_token}' (id={kb_top}) (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {RTOL_MAX}"
         
         print("\n" + "-"*70)
         print(f"All prefill tests passed for {model_name}!")
@@ -1466,7 +1689,7 @@ def test_generation(loaded_models):
     Validates that both implementations produce matching token sequences.
     Skipped for SwinV2 (image classification, no generation).
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor), model_name, max_layers = loaded_models
     
     # Skip generation test for vision models
     if _is_swinv2_model(model_name):
@@ -1475,6 +1698,10 @@ def test_generation(loaded_models):
     # Skip generation test for T5 (would need a different generation setup)
     if _is_t5_model(model_name):
         pytest.skip("T5 generation test not yet implemented (use test_prefill_alignment)")
+    
+    # Skip generation test for Whisper (would need encoder-decoder generation setup)
+    if _is_whisper_model(model_name):
+        pytest.skip("Whisper generation test not yet implemented (use test_prefill_alignment)")
     
     is_mamba2 = _is_mamba2_model(model_name)
     is_mamba1 = _is_mamba1_model(model_name)
@@ -1721,10 +1948,14 @@ def test_components(loaded_models):
     Validates that individual model components (embeddings, layer norms, MLP, LM head)
     produce matching outputs between HuggingFace and KernelBench implementations.
     """
-    (hf_model, kb_model, tokenizer, kb_config, _, image_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, _, image_processor, whisper_processor), model_name, max_layers = loaded_models
     
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
+    is_whisper = _is_whisper_model(model_name)
+    
+    if is_whisper:
+        pytest.skip("Whisper component tests not yet implemented (use test_prefill_alignment)")
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
