@@ -56,7 +56,7 @@ from ..level1.activations._8_GELU import Model as GELU
 from ..level1.vision._1_PatchEmbed2D import Model as PatchEmbed2D
 from ..level1.vision._3_PatchMerging import Model as PatchMerging
 from ..level1.vision._9_WindowPartition2D import Model as WindowPartition2D
-from ..level1.attention._8_ShiftedWindowAttention import Model as ShiftedWindowAttention
+from ..level1.attention._6_ShiftedWindowAttention import Model as ShiftedWindowAttention
 
 
 # ============================================================================

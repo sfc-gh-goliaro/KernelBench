@@ -29,11 +29,8 @@ from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.attention._3_GroupedQueryAttention import (
-    Model as GroupedQueryAttention,
-    AttentionMetadata,
-    create_attention_metadata,
-)
+from ..level1.attention._1_PagedKVCache import AttentionMetadata, create_attention_metadata
+from ..level1.attention._2_Attention import MultiHeadAttention as GroupedQueryAttention
 
 
 # ============================================================================

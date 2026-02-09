@@ -326,8 +326,10 @@ def _build_t5_key_mapping(hf_state, kb_state) -> dict:
     
     KB level1 operator wrappers add extra nesting that must be unwrapped:
       shared.embedding.weight -> shared.weight (Embedding wraps nn.Embedding)
-      layer_norm.rmsnorm.weight -> layer_norm.weight (T5LayerNorm wraps RMSNorm)
       relative_attention_bias.embedding.weight -> relative_attention_bias.weight
+    
+    Note: T5 now uses RMSNorm directly (no T5LayerNorm wrapper), so
+    layer_norm.weight maps directly to layer_norm.weight without unwrapping.
     """
     mapping = {}  # kb_key -> hf_key
     
@@ -346,8 +348,6 @@ def _build_t5_key_mapping(hf_state, kb_state) -> dict:
         # Unwrap level1 Embedding in relative_attention_bias
         hf_key = hf_key.replace('relative_attention_bias.embedding.weight',
                                 'relative_attention_bias.weight')
-        # Unwrap level1 RMSNorm wrapper: rmsnorm.weight -> weight
-        hf_key = hf_key.replace('.rmsnorm.weight', '.weight')
         
         if hf_key in hf_state:
             mapping[kb_key] = hf_key

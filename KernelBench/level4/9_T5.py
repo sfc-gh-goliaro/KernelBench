@@ -31,13 +31,13 @@ HuggingFace weight structure (T5ForConditionalGeneration):
 Tested against: google/flan-t5-large
 
 This model uses level1 operators from KernelBench:
-- RMSNorm from level1/normalization/4_RMSNorm (T5LayerNorm)
+- RMSNorm from level1/normalization/4_RMSNorm (T5LayerNorm — used directly)
+- ScaledDotProductAttention from level1/attention/1_ScaledDotProductAttention
 - Linear from level1/matmul/10_Linear (all projections)
-- Embedding from level1/embeddings/2_Embedding (shared vocab embedding)
+- Embedding from level1/embeddings/2_Embedding (shared vocab embedding,
+  relative position bias)
 - GELU from level1/activations/8_GELU (gated MLP)
 - ReLU from level1/activations/1_ReLU (non-gated MLP)
-- Softmax from level1/activations/5_Softmax (attention weights)
-- MatMul from level1/matmul/1_MatMul (attention scores & context)
 """
 
 import torch
@@ -48,11 +48,10 @@ from typing import Optional, Dict, Any, Tuple, List
 # Import level1 operators
 from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.matmul._1_MatMul import Model as MatMul
 from ..level1.embeddings._2_Embedding import Model as Embedding
 from ..level1.activations._8_GELU import Model as GELUOp
 from ..level1.activations._1_ReLU import Model as ReLUOp
-from ..level1.activations._5_Softmax import Model as Softmax
+from ..level1.attention._2_Attention import ScaledDotProductAttention
 
 
 # ============================================================================
@@ -70,37 +69,6 @@ VARIANTS: Dict[str, str] = {
 
 
 # ============================================================================
-# T5 Layer Norm via level1 RMSNorm
-# ============================================================================
-
-class T5LayerNorm(nn.Module):
-    """T5-style RMSNorm: no bias, no mean subtraction.
-
-    Matches HuggingFace T5LayerNorm exactly.
-    Implemented using level1 RMSNorm operator.
-    """
-    def __init__(self, hidden_size: int, eps: float = 1e-6):
-        super().__init__()
-        # T5LayerNorm is RMSNorm with learnable weight, dim=-1
-        self.rmsnorm = RMSNorm(
-            num_features=hidden_size, eps=eps,
-            learnable_weight=True, dim=-1
-        )
-
-    @property
-    def weight(self):
-        """Expose weight for HF weight copying compatibility."""
-        return self.rmsnorm.weight
-
-    @weight.setter
-    def weight(self, value):
-        self.rmsnorm.weight = value
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return self.rmsnorm(hidden_states)
-
-
-# ============================================================================
 # Component Modules (matching HF weight layout)
 # ============================================================================
 
@@ -111,7 +79,10 @@ class T5Attention(nn.Module):
       self.q, self.k, self.v, self.o
       self.relative_attention_bias  (only for first layer self-attention)
 
-    Uses level1 operators: Linear, MatMul, Softmax, Embedding
+    Uses level1 operators: Linear, Embedding, ScaledDotProductAttention
+
+    T5 attention is unique in that it does NOT scale by 1/sqrt(d_k).
+    The relative position bias is added to attention scores before softmax.
     """
     def __init__(
         self,
@@ -145,9 +116,8 @@ class T5Attention(nn.Module):
                 relative_attention_num_buckets, num_heads
             )
 
-        # Level1 operators
-        self.matmul = MatMul()
-        self.softmax = Softmax(dim=-1)
+        # Level1 ScaledDotProductAttention (parameter-free)
+        self.sdpa = ScaledDotProductAttention()
 
     @staticmethod
     def _relative_position_bucket(
@@ -214,6 +184,7 @@ class T5Attention(nn.Module):
         current_states = key_value_states if is_cross_attention else hidden_states
         kv_len = current_states.shape[1]
 
+        # Q/K/V projections → (batch, heads, seq, head_dim)
         query_states = self.q(hidden_states).view(
             batch_size, -1, self.n_heads, self.key_value_proj_dim
         ).transpose(1, 2)
@@ -224,8 +195,7 @@ class T5Attention(nn.Module):
             batch_size, -1, self.n_heads, self.key_value_proj_dim
         ).transpose(1, 2)
 
-        scores = self.matmul(query_states, key_states.transpose(3, 2))
-
+        # Compute position bias (additive to attention scores)
         if position_bias is None:
             if self.has_relative_attention_bias:
                 position_bias = self.compute_bias(
@@ -234,17 +204,23 @@ class T5Attention(nn.Module):
             else:
                 position_bias = torch.zeros(
                     (1, self.n_heads, seq_length, kv_len),
-                    device=scores.device,
-                    dtype=scores.dtype,
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
                 )
 
             if mask is not None:
                 position_bias = position_bias + mask
 
-        scores += position_bias
-
-        attn_weights = self.softmax(scores.float()).type_as(scores)
-        attn_output = self.matmul(attn_weights, value_states)
+        # Use ScaledDotProductAttention with:
+        # - scale=1.0 (T5 does NOT use 1/sqrt(d_k) scaling)
+        # - attn_bias=position_bias (relative position bias + optional causal mask)
+        attn_output = self.sdpa(
+            query_states,
+            key_states,
+            value_states,
+            attn_bias=position_bias,
+            scale=1.0,
+        )
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(
             batch_size, -1, self.inner_dim
@@ -282,7 +258,11 @@ class T5LayerSelfAttention(nn.Module):
             relative_attention_num_buckets=relative_attention_num_buckets,
             relative_attention_max_distance=relative_attention_max_distance,
         )
-        self.layer_norm = T5LayerNorm(d_model)
+        # Use RMSNorm directly (T5LayerNorm IS RMSNorm)
+        self.layer_norm = RMSNorm(
+            num_features=d_model, eps=1e-6,
+            learnable_weight=True, dim=-1
+        )
 
     def forward(
         self,
@@ -314,7 +294,11 @@ class T5LayerCrossAttention(nn.Module):
             is_decoder=True,
             has_relative_attention_bias=False,
         )
-        self.layer_norm = T5LayerNorm(d_model)
+        # Use RMSNorm directly
+        self.layer_norm = RMSNorm(
+            num_features=d_model, eps=1e-6,
+            learnable_weight=True, dim=-1
+        )
 
     def forward(
         self,
@@ -391,7 +375,11 @@ class T5LayerFF(nn.Module):
             self.DenseReluDense = T5DenseGatedActDense(d_model, d_ff)
         else:
             self.DenseReluDense = T5DenseActDense(d_model, d_ff, act_fn=act_fn)
-        self.layer_norm = T5LayerNorm(d_model)
+        # Use RMSNorm directly
+        self.layer_norm = RMSNorm(
+            num_features=d_model, eps=1e-6,
+            learnable_weight=True, dim=-1
+        )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         forwarded = self.layer_norm(hidden_states)
@@ -513,13 +501,12 @@ class Model(nn.Module):
       lm_head -> self.lm_head (Linear)
 
     Uses level1 operators:
-    - RMSNorm from level1/normalization/4_RMSNorm (T5LayerNorm)
+    - RMSNorm from level1/normalization/4_RMSNorm (T5LayerNorm — used directly)
+    - ScaledDotProductAttention from level1/attention/1_ScaledDotProductAttention
     - Linear from level1/matmul/10_Linear (all projections)
     - Embedding from level1/embeddings/2_Embedding (shared vocab)
     - GELU from level1/activations/8_GELU
     - ReLU from level1/activations/1_ReLU
-    - Softmax from level1/activations/5_Softmax
-    - MatMul from level1/matmul/1_MatMul
     """
 
     def __init__(
@@ -568,7 +555,11 @@ class Model(nn.Module):
             )
             for i in range(num_encoder_layers)
         ])
-        self.encoder_final_layer_norm = T5LayerNorm(d_model)
+        # Use RMSNorm directly for encoder final layer norm
+        self.encoder_final_layer_norm = RMSNorm(
+            num_features=d_model, eps=1e-6,
+            learnable_weight=True, dim=-1
+        )
 
         # Decoder blocks (same as HF: decoder.block.{i})
         self.decoder_blocks = nn.ModuleList([
@@ -586,7 +577,11 @@ class Model(nn.Module):
             )
             for i in range(num_decoder_layers)
         ])
-        self.decoder_final_layer_norm = T5LayerNorm(d_model)
+        # Use RMSNorm directly for decoder final layer norm
+        self.decoder_final_layer_norm = RMSNorm(
+            num_features=d_model, eps=1e-6,
+            learnable_weight=True, dim=-1
+        )
 
         # Level1 Linear for LM head
         self.lm_head = Linear(d_model, vocab_size, bias=False)

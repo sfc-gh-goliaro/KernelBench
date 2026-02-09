@@ -32,11 +32,8 @@ from dataclasses import dataclass
 from ..level1.normalization._6_LayerNorm import Model as LayerNorm
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.attention._6_ALiBi import Model as ALiBiAttention
-from ..level1.attention._3_GroupedQueryAttention import (
-    AttentionMetadata,
-    create_attention_metadata,
-)
+from ..level1.attention._4_ALiBi import Model as ALiBiAttention
+from ..level1.attention._1_PagedKVCache import AttentionMetadata, create_attention_metadata
 
 
 # ============================================================================

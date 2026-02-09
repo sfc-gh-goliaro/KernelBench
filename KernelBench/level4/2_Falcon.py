@@ -30,11 +30,8 @@ from ..level1.normalization._6_LayerNorm import Model as LayerNorm
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.matmul._10_Linear import Model as Linear
-from ..level1.attention._4_MultiQueryAttention import (
-    Model as MultiQueryAttention,
-    AttentionMetadata,
-    create_attention_metadata,
-)
+from ..level1.attention._1_PagedKVCache import AttentionMetadata, create_attention_metadata
+from ..level1.attention._2_Attention import MultiHeadAttention as MultiQueryAttention
 
 
 # ============================================================================
