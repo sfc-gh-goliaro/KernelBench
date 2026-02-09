@@ -3,9 +3,11 @@ Test model alignment with HuggingFace transformers library.
 
 This test validates that KernelBench model implementations produce
 outputs matching the HuggingFace transformers implementation using:
-1. A batch of 5 prompts with varying lengths
-2. Continuous batching with paged KV cache
-3. Both prefill and decode phases
+1. A batch of 5 prompts with varying lengths (text models)
+2. Continuous batching with paged KV cache (decoder-only models)
+3. Both prefill and decode phases (decoder-only/SSM models)
+4. Image classification (vision models like SwinV2)
+5. Encoder-decoder forward pass (T5 models)
 
 Supports any model with a corresponding KernelBench level4 implementation.
 Pass the model name via --model-name parameter.
@@ -16,6 +18,8 @@ Usage:
     pytest tests/test_hf_alignment.py --model-name meta-llama/Llama-3.1-8B-Instruct
     pytest tests/test_hf_alignment.py --model-name meta-llama/Llama-3.1-70B-Instruct
     pytest tests/test_hf_alignment.py --model-name mistralai/Mistral-7B-v0.1
+    pytest tests/test_hf_alignment.py --model-name google/flan-t5-large --max-layers 4
+    pytest tests/test_hf_alignment.py --model-name microsoft/swinv2-large-patch4-window12-192-22k
     
     # Use only first 4 layers for faster testing:
     pytest tests/test_hf_alignment.py --model-name meta-llama/Llama-3.1-70B-Instruct --max-layers 4
@@ -46,9 +50,13 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'KernelBench'))
 # Skip all tests if transformers is not available
 transformers = pytest.importorskip("transformers")
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor
+from transformers import T5ForConditionalGeneration, Swinv2ForImageClassification
 import json
 import re
+import requests
+from io import BytesIO
+from PIL import Image
 
 # Configuration
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -90,6 +98,11 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     "google/flan-t5-small": "KernelBench.level4.9_T5",
     "google/flan-t5-base": "KernelBench.level4.9_T5",
     "google/flan-t5-large": "KernelBench.level4.9_T5",
+    # SwinV2 variants
+    "microsoft/swinv2-tiny-patch4-window8-256": "KernelBench.level4.10_SwinV2",
+    "microsoft/swinv2-small-patch4-window8-256": "KernelBench.level4.10_SwinV2",
+    "microsoft/swinv2-base-patch4-window12-192-22k": "KernelBench.level4.10_SwinV2",
+    "microsoft/swinv2-large-patch4-window12-192-22k": "KernelBench.level4.10_SwinV2",
     # Qwen2-VL
     "Qwen/Qwen2-VL-2B-Instruct": "KernelBench.level4.11_Qwen2VL",
     "Qwen/Qwen2-VL-7B-Instruct": "KernelBench.level4.11_Qwen2VL",
@@ -184,6 +197,62 @@ def binary_search(arr: list[int], target: int) -> int:""",
 Begin your paragraph:""",
 ]
 
+# Test prompts for T5 encoder-decoder models - task-specific text-to-text prompts
+T5_TEST_PROMPTS = [
+    # Short translation task
+    "Translate English to German: The house is wonderful.",
+
+    # Medium summarization task
+    "Summarize: Machine learning is a branch of artificial intelligence that focuses on building "
+    "applications that learn from data and improve their accuracy over time without being programmed "
+    "to do so. In data science, an algorithm is a sequence of statistical processing steps.",
+
+    # Question answering with context
+    "Answer the question based on the context. Context: The Eiffel Tower is a wrought-iron lattice "
+    "tower on the Champ de Mars in Paris, France. It was named after the engineer Gustave Eiffel, "
+    "whose company designed and built the tower from 1887 to 1889. Question: Who designed the Eiffel Tower?",
+
+    # Sentiment classification
+    "Classify the sentiment of this review as positive or negative: "
+    "The movie had stunning visuals and a compelling storyline that kept me on the edge of my seat.",
+
+    # Longer paraphrase/rewrite task
+    "Paraphrase: A road trip from San Francisco to Los Angeles offers many interesting stops along "
+    "the way, including natural landmarks, excellent restaurants, and historical sites that showcase "
+    "the rich cultural heritage of the California coast.",
+]
+
+# Test images for vision models (SwinV2) - publicly accessible COCO val2017 URLs
+TEST_IMAGE_URLS = [
+    # Two cats on a couch (640x480)
+    "http://images.cocodataset.org/val2017/000000039769.jpg",
+    # A group of skiers on a snowy slope (640x427)
+    "http://images.cocodataset.org/val2017/000000281759.jpg",
+    # A street scene with people and vehicles (640x427)
+    "http://images.cocodataset.org/val2017/000000397133.jpg",
+    # A table with food items (640x428)
+    "http://images.cocodataset.org/val2017/000000252219.jpg",
+    # A kitchen scene (640x480)
+    "http://images.cocodataset.org/val2017/000000087038.jpg",
+]
+
+def _load_test_images() -> List[Tuple[Image.Image, str]]:
+    """Download and return (PIL image, URL) pairs from TEST_IMAGE_URLS."""
+    images = []
+    for url in TEST_IMAGE_URLS:
+        try:
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            img = Image.open(BytesIO(response.content)).convert("RGB")
+            images.append((img, url))
+        except Exception as e:
+            print(f"  Warning: Could not load image from {url}: {e}")
+            # Skip failed images
+            continue
+    if not images:
+        raise RuntimeError("Could not load any test images from URLs")
+    return images
+
 # Response lengths for each prompt (number of tokens to generate)
 RESPONSE_LENGTHS = [10, 50, 100, 150, 50]
 
@@ -246,19 +315,170 @@ def _normalize_key(key: str) -> str:
     return key
 
 
-def copy_weights(hf_model, kb_model, num_layers: int) -> None:
+def _build_t5_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for T5 models.
+    
+    HF T5 uses:
+      encoder.block.{i}.layer.{j} -> KB uses encoder_blocks.{i}.layer.{j}
+      decoder.block.{i}.layer.{j} -> KB uses decoder_blocks.{i}.layer.{j}
+      encoder.final_layer_norm -> KB uses encoder_final_layer_norm
+      decoder.final_layer_norm -> KB uses decoder_final_layer_norm
+    
+    KB level1 operator wrappers add extra nesting that must be unwrapped:
+      shared.embedding.weight -> shared.weight (Embedding wraps nn.Embedding)
+      layer_norm.rmsnorm.weight -> layer_norm.weight (T5LayerNorm wraps RMSNorm)
+      relative_attention_bias.embedding.weight -> relative_attention_bias.weight
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        hf_key = kb_key
+        # Map KB encoder_blocks -> HF encoder.block
+        hf_key = hf_key.replace('encoder_blocks.', 'encoder.block.')
+        # Map KB decoder_blocks -> HF decoder.block
+        hf_key = hf_key.replace('decoder_blocks.', 'decoder.block.')
+        # Map KB encoder_final_layer_norm -> HF encoder.final_layer_norm
+        hf_key = hf_key.replace('encoder_final_layer_norm.', 'encoder.final_layer_norm.')
+        # Map KB decoder_final_layer_norm -> HF decoder.final_layer_norm
+        hf_key = hf_key.replace('decoder_final_layer_norm.', 'decoder.final_layer_norm.')
+        # Unwrap level1 Embedding wrapper: shared.embedding.weight -> shared.weight
+        hf_key = hf_key.replace('shared.embedding.weight', 'shared.weight')
+        # Unwrap level1 Embedding in relative_attention_bias
+        hf_key = hf_key.replace('relative_attention_bias.embedding.weight',
+                                'relative_attention_bias.weight')
+        # Unwrap level1 RMSNorm wrapper: rmsnorm.weight -> weight
+        hf_key = hf_key.replace('.rmsnorm.weight', '.weight')
+        
+        if hf_key in hf_state:
+            mapping[kb_key] = hf_key
+    
+    return mapping
+
+
+def _build_swinv2_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for SwinV2 models.
+    
+    HF SwinV2 uses 'swinv2.' prefix for the backbone.
+    KB model structure mirrors HF without the prefix.
+    
+    KB level1 LayerNorm wraps nn.LayerNorm as self.ln, adding '.ln.' in keys:
+      embeddings.norm.ln.weight -> swinv2.embeddings.norm.weight
+      layernorm_before.ln.weight -> layernorm_before.weight
+      layernorm.ln.weight -> swinv2.layernorm.weight
+    
+    KB Q/K/V projections live on Swinv2Attention (attention.query/key/value),
+    while HF has them inside Swinv2SelfAttention (attention.self.query/key/value):
+      attention.query.weight -> swinv2...attention.self.query.weight
+      attention.key.weight   -> swinv2...attention.self.key.weight
+      attention.value.weight -> swinv2...attention.self.value.weight
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        # Unwrap level1 LayerNorm wrapper: .ln.weight/.ln.bias -> .weight/.bias
+        unwrapped_key = kb_key.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
+        
+        # Q/K/V projections: KB has attention.query/key/value,
+        # HF has attention.self.query/key/value
+        for proj in ('query', 'key', 'value'):
+            unwrapped_key = unwrapped_key.replace(
+                f'.attention.{proj}.', f'.attention.self.{proj}.'
+            )
+        
+        # Try with swinv2. prefix for backbone keys
+        hf_key = 'swinv2.' + unwrapped_key
+        if hf_key in hf_state:
+            mapping[kb_key] = hf_key
+        elif unwrapped_key in hf_state:
+            # classifier weights don't have swinv2. prefix
+            mapping[kb_key] = unwrapped_key
+    
+    return mapping
+
+
+def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> None:
     """
     Copy weights from HuggingFace model to KernelBench model.
     
     Uses automatic key matching to support different architectures:
     - Llama: model.embed_tokens, model.layers, model.norm
     - Falcon: transformer.word_embeddings, transformer.h, transformer.ln_f
+    - T5: encoder.block, decoder.block (encoder-decoder)
+    - SwinV2: swinv2.embeddings, swinv2.encoder.layers (vision)
     
     Handles structural differences where KB wraps primitives in extra modules.
     """
     hf_state = hf_model.state_dict()
     kb_state = kb_model.state_dict()
     
+    # Use specialized mapping for T5 and SwinV2
+    if _is_t5_model(model_name):
+        explicit_mapping = _build_t5_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            if any(skip in kb_key for skip in ['inv_freq', 'kv_cache', '_cache']):
+                skipped_buffers += 1
+                continue
+            
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
+    if _is_swinv2_model(model_name):
+        explicit_mapping = _build_swinv2_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            if any(skip in kb_key for skip in ['relative_coords_table', 'relative_position_index']):
+                skipped_buffers += 1
+                continue
+            
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
+    # Default: Llama/Falcon/Mistral/BLOOM/Mamba style
     # Detect HF model prefix (e.g., "model." for Llama, "transformer." for Falcon, "backbone." for Mamba2)
     hf_prefix = ""
     for hf_key in hf_state.keys():
@@ -327,6 +547,18 @@ def _is_mamba1_model(model_name: str) -> bool:
 def _is_ssm_model(model_name: str) -> bool:
     """Check if a model is any SSM model (Mamba-1 or Mamba-2)."""
     return _is_mamba2_model(model_name) or _is_mamba1_model(model_name)
+
+
+def _is_t5_model(model_name: str) -> bool:
+    """Check if a model is a T5 encoder-decoder model."""
+    return any(pattern in model_name.lower() for pattern in [
+        "t5", "flan-t5", "google-t5",
+    ])
+
+
+def _is_swinv2_model(model_name: str) -> bool:
+    """Check if a model is a SwinV2 image classification model."""
+    return "swinv2" in model_name.lower()
 
 
 def _fix_mamba2_config_json(model_path: str) -> None:
@@ -426,6 +658,41 @@ def _create_kb_mamba1_config(hf_config) -> dict:
     }
 
 
+def _create_kb_t5_config(hf_config) -> dict:
+    """Create KernelBench config dict for T5 encoder-decoder models."""
+    return {
+        'd_model': hf_config.d_model,
+        'num_heads': hf_config.num_heads,
+        'd_kv': hf_config.d_kv,
+        'd_ff': hf_config.d_ff,
+        'vocab_size': hf_config.vocab_size,
+        'num_encoder_layers': hf_config.num_layers,
+        'num_decoder_layers': hf_config.num_decoder_layers,
+        'relative_attention_num_buckets': hf_config.relative_attention_num_buckets,
+        'relative_attention_max_distance': hf_config.relative_attention_max_distance,
+        'is_gated_act': hf_config.is_gated_act,
+        'dense_act_fn': hf_config.dense_act_fn,
+        'tie_word_embeddings': getattr(hf_config, 'tie_word_embeddings', False),
+    }
+
+
+def _create_kb_swinv2_config(hf_config) -> dict:
+    """Create KernelBench config dict for SwinV2 models."""
+    return {
+        'image_size': hf_config.image_size,
+        'patch_size': hf_config.patch_size,
+        'num_channels': hf_config.num_channels,
+        'embed_dim': hf_config.embed_dim,
+        'depths': hf_config.depths,
+        'num_heads': hf_config.num_heads,
+        'window_size': hf_config.window_size,
+        'mlp_ratio': hf_config.mlp_ratio,
+        'qkv_bias': hf_config.qkv_bias,
+        'num_labels': hf_config.num_labels,
+        'pretrained_window_sizes': getattr(hf_config, 'pretrained_window_sizes', [0, 0, 0, 0]),
+    }
+
+
 def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     """Create KernelBench model config from HuggingFace config.
     
@@ -441,6 +708,12 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
         return _create_kb_mamba2_config(hf_config)
     if getattr(hf_config, 'model_type', None) in ('falcon_mamba', 'mamba'):
         return _create_kb_mamba1_config(hf_config)
+    # Check if this is a T5 model
+    if getattr(hf_config, 'model_type', None) == 't5':
+        return _create_kb_t5_config(hf_config)
+    # Check if this is a SwinV2 model
+    if getattr(hf_config, 'model_type', None) == 'swinv2':
+        return _create_kb_swinv2_config(hf_config)
     # Get rope_scaling if available (not used by BLOOM which uses ALiBi)
     rope_scaling = getattr(hf_config, 'rope_scaling', None)
     
@@ -750,6 +1023,8 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     is_mamba2 = _is_mamba2_model(model_name)
     is_mamba1 = _is_mamba1_model(model_name)
     is_ssm = is_mamba2 or is_mamba1
+    is_t5 = _is_t5_model(model_name)
+    is_swinv2 = _is_swinv2_model(model_name)
     
     # SSM models need snapshot_download for local path loading
     if is_ssm:
@@ -766,9 +1041,15 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         if is_mamba2:
             _fix_mamba2_config_json(model_path)
     
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    # Load tokenizer (text models) or image processor (vision models)
+    tokenizer = None
+    image_processor = None
+    if is_swinv2:
+        image_processor = AutoImageProcessor.from_pretrained(model_name)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
     
     if is_ssm:
         hf_config = AutoConfig.from_pretrained(model_path)
@@ -784,11 +1065,17 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         hf_config = AutoConfig.from_pretrained(model_name)
     
     # Get total layers (handle different naming conventions)
-    total_layers = getattr(hf_config, 'num_hidden_layers', None)
-    if total_layers is None:
-        total_layers = getattr(hf_config, 'n_layer', None)  # BLOOM
-    if total_layers is None:
-        raise ValueError(f"Could not determine num_layers from config: {hf_config}")
+    if is_swinv2:
+        # SwinV2 uses depths list, not a single num_layers
+        total_layers = sum(hf_config.depths)
+    elif is_t5:
+        total_layers = hf_config.num_layers  # T5 uses num_layers
+    else:
+        total_layers = getattr(hf_config, 'num_hidden_layers', None)
+        if total_layers is None:
+            total_layers = getattr(hf_config, 'n_layer', None)  # BLOOM
+        if total_layers is None:
+            raise ValueError(f"Could not determine num_layers from config: {hf_config}")
     
     # Determine actual number of layers to use
     if max_layers is None:
@@ -798,7 +1085,42 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     
     truncated = num_layers < total_layers
     
-    if truncated:
+    # --- Load HF model ---
+    if is_t5:
+        if truncated:
+            hf_config.num_layers = num_layers
+            hf_config.num_decoder_layers = num_layers
+        hf_model = T5ForConditionalGeneration.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+        )
+        hf_model.eval()
+    elif is_swinv2:
+        # SwinV2: truncation means reducing depths
+        if truncated:
+            # Simple truncation: reduce depths proportionally
+            orig_depths = list(hf_config.depths)
+            remaining = num_layers
+            new_depths = []
+            for d in orig_depths:
+                take = min(d, remaining)
+                new_depths.append(take)
+                remaining -= take
+                if remaining <= 0:
+                    break
+            while len(new_depths) < len(orig_depths):
+                new_depths.append(0)
+            hf_config.depths = new_depths
+        hf_model = Swinv2ForImageClassification.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+        )
+        hf_model.eval()
+    elif truncated:
         # Memory-efficient loading: use meta tensors + selective shard loading
         print(f"Using memory-efficient loading for {num_layers}/{total_layers} layers...")
         
@@ -844,7 +1166,13 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     # Create KB config 
     kb_config = create_kb_model_from_hf_config(hf_config)
     
-    if is_ssm:
+    if is_t5:
+        kb_config['num_encoder_layers'] = num_layers
+        kb_config['num_decoder_layers'] = num_layers
+    elif is_swinv2:
+        if truncated:
+            kb_config['depths'] = list(hf_config.depths)
+    elif is_ssm:
         kb_config['num_hidden_layers'] = num_layers
     else:
         # Calculate num_blocks needed for testing (per-layer KV cache)
@@ -859,10 +1187,16 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     kb_model = kb_model.to(device=DEVICE, dtype=DTYPE)
     
     # Copy weights for the layers we loaded
-    copy_weights(hf_model, kb_model, num_layers)
+    copy_weights(hf_model, kb_model, num_layers, model_name=model_name)
     kb_model.eval()
     
-    if is_ssm:
+    if is_t5:
+        print(f"Loaded: {num_layers}/{total_layers} layers, d_model={kb_config['d_model']}, "
+              f"{kb_config['num_heads']} heads (T5 encoder-decoder)")
+    elif is_swinv2:
+        print(f"Loaded: depths={kb_config['depths']}, embed_dim={kb_config['embed_dim']}, "
+              f"num_heads={kb_config['num_heads']} (SwinV2)")
+    elif is_ssm:
         heads_info = f"{kb_config.get('num_heads', 'N/A')} heads" if is_mamba2 else f"d_inner={kb_config.get('intermediate_size', 'N/A')}"
         print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
               f"{heads_info} (SSM)")
@@ -870,7 +1204,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
               f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
     
-    return hf_model, kb_model, tokenizer, kb_config, kb_module
+    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor
 
 
 # ============================================================================
@@ -908,18 +1242,141 @@ def test_prefill_alignment(loaded_models):
     """
     Test prefill (prompt processing) alignment.
     
-    Uses generate(max_new_tokens=0, return_logits=True) to get prefill logits.
-    Compares HuggingFace and KernelBench outputs to ensure numerical alignment.
+    For decoder-only/SSM models: uses text prompts with generate(max_new_tokens=0).
+    For T5: uses text prompts as encoder input, pad token as decoder input.
+    For SwinV2: uses random pixel values for image classification.
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor), model_name, max_layers = loaded_models
     
     is_ssm = _is_ssm_model(model_name)
+    is_t5 = _is_t5_model(model_name)
+    is_swinv2 = _is_swinv2_model(model_name)
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
     print(f"Testing Prefill Alignment for {model_name}{layers_info}")
     print("="*70)
     
+    if is_swinv2:
+        # SwinV2: test with real images preprocessed by the HF image processor
+        assert image_processor is not None, "Image processor required for SwinV2"
+        test_images = _load_test_images()
+        print(f"  Loaded {len(test_images)} test images")
+        
+        for i, (pil_image, image_url) in enumerate(test_images):
+            # Preprocess with the official HuggingFace image processor
+            inputs = image_processor(images=pil_image, return_tensors="pt")
+            pixel_values = inputs['pixel_values'].to(device=DEVICE, dtype=DTYPE)
+            
+            with torch.no_grad():
+                # HuggingFace
+                hf_out = hf_model(pixel_values=pixel_values)
+                hf_logits = hf_out.logits  # (1, num_labels)
+                
+                # KernelBench
+                kb_logits = kb_model(pixel_values)  # (1, num_labels)
+            
+            hf_flat = hf_logits.float()
+            kb_flat = kb_logits.float()
+            
+            abs_diff = (hf_flat - kb_flat).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_flat.abs(), kb_flat.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_flat.argmax(dim=-1).item()
+            kb_top = kb_flat.argmax(dim=-1).item()
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < RTOL_MEAN
+            max_ok = max_rel_diff < RTOL_MAX
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            img_w, img_h = pil_image.size
+            print(f"\n  [{i}] {status}: image ({img_w}x{img_h}, URL: ...{image_url[-20:]})")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e}, mean={mean_rel_diff:.2e}")
+            print(f"      HF top: {hf_top} | KB top: {kb_top} (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_top} vs KB={kb_top}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    if is_t5:
+        # T5: test with task-specific encoder-decoder prompts
+        for i, prompt in enumerate(T5_TEST_PROMPTS):
+            encoded = tokenizer(prompt, return_tensors="pt").to(DEVICE)
+            input_ids = encoded['input_ids']
+            
+            # Use pad token as decoder start token (standard T5 practice)
+            decoder_input_ids = torch.full(
+                (input_ids.shape[0], 1),
+                hf_model.config.decoder_start_token_id or 0,
+                dtype=torch.long,
+                device=DEVICE,
+            )
+            
+            with torch.no_grad():
+                # HuggingFace
+                hf_out = hf_model(
+                    input_ids=input_ids,
+                    decoder_input_ids=decoder_input_ids,
+                    use_cache=False,
+                )
+                hf_logits = hf_out.logits  # (batch, decoder_seq_len, vocab)
+                
+                # KernelBench
+                kb_logits = kb_model(input_ids, decoder_input_ids)
+            
+            # Compare last position logits
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = tokenizer.decode([hf_top])
+            kb_token = tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < RTOL_MEAN
+            max_ok = max_rel_diff < RTOL_MAX
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            seq_len = input_ids.shape[1]
+            print(f"\n  [{i}] {status}: (encoder_len={seq_len})")
+            print(f"      Prompt: '{prompt[:60]}...'")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={RTOL_MAX}), mean={mean_rel_diff:.2e} (limit={RTOL_MEAN})")
+            print(f"      HF next: '{hf_token}' | KB next: '{kb_token}' (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {RTOL_MAX}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    # Standard decoder-only / SSM models
     for i, prompt in enumerate(TEST_PROMPTS):
         encoded = tokenizer(prompt, return_tensors="pt").to(DEVICE)
         input_ids = encoded['input_ids']
@@ -1007,8 +1464,17 @@ def test_generation(loaded_models):
     
     Uses generate() for KernelBench model and compares with HuggingFace generation.
     Validates that both implementations produce matching token sequences.
+    Skipped for SwinV2 (image classification, no generation).
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor), model_name, max_layers = loaded_models
+    
+    # Skip generation test for vision models
+    if _is_swinv2_model(model_name):
+        pytest.skip("SwinV2 is an image classification model, no generation test")
+    
+    # Skip generation test for T5 (would need a different generation setup)
+    if _is_t5_model(model_name):
+        pytest.skip("T5 generation test not yet implemented (use test_prefill_alignment)")
     
     is_mamba2 = _is_mamba2_model(model_name)
     is_mamba1 = _is_mamba1_model(model_name)
@@ -1255,13 +1721,93 @@ def test_components(loaded_models):
     Validates that individual model components (embeddings, layer norms, MLP, LM head)
     produce matching outputs between HuggingFace and KernelBench implementations.
     """
-    (hf_model, kb_model, tokenizer, kb_config, _), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, _, image_processor), model_name, max_layers = loaded_models
+    
+    is_t5 = _is_t5_model(model_name)
+    is_swinv2 = _is_swinv2_model(model_name)
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
     print(f"Testing Component Alignment for {model_name}{layers_info}")
     print("="*70)
     
+    if is_t5:
+        # T5 component tests
+        vocab_size = kb_config['vocab_size']
+        d_model = kb_config['d_model']
+        
+        # Test shared embedding
+        test_ids = torch.randint(0, vocab_size, (2, 32), device=DEVICE)
+        with torch.no_grad():
+            hf_emb = hf_model.shared(test_ids)
+            kb_emb = kb_model.shared(test_ids)
+        
+        emb_diff = (hf_emb - kb_emb).abs().max().item()
+        print(f"  Embedding diff: {emb_diff:.2e} {'PASS' if emb_diff < 1e-6 else 'FAIL'}")
+        assert emb_diff < 1e-6
+        
+        # Test encoder first block layer norm
+        hidden = torch.randn(2, 32, d_model, device=DEVICE, dtype=DTYPE)
+        with torch.no_grad():
+            hf_norm_out = hf_model.encoder.block[0].layer[0].layer_norm(hidden)
+            kb_norm_out = kb_model.encoder_blocks[0].layer[0].layer_norm(hidden)
+        
+        norm_diff = (hf_norm_out - kb_norm_out).abs().max().item()
+        print(f"  LayerNorm diff: {norm_diff:.2e} {'PASS' if norm_diff < ATOL_STRICT else 'FAIL'}")
+        assert norm_diff < ATOL_STRICT
+        
+        # Test LM head
+        with torch.no_grad():
+            hf_head = hf_model.lm_head(hidden)
+            kb_head = kb_model.lm_head(hidden)
+        
+        head_diff = (hf_head - kb_head).abs().max().item()
+        print(f"  LM Head diff: {head_diff:.2e} {'PASS' if head_diff < ATOL_STRICT else 'FAIL'}")
+        assert head_diff < ATOL_STRICT
+        
+        print("\n  All component tests passed!")
+        return
+    
+    if is_swinv2:
+        # SwinV2 component tests
+        embed_dim = kb_config['embed_dim']
+        
+        # Test patch embedding
+        pixel_values = torch.randn(1, 3, kb_config['image_size'], kb_config['image_size'],
+                                   device=DEVICE, dtype=DTYPE)
+        with torch.no_grad():
+            hf_patch = hf_model.swinv2.embeddings.patch_embeddings.projection(pixel_values)
+            kb_patch = kb_model.embeddings.patch_embeddings.projection(pixel_values)
+        
+        patch_diff = (hf_patch - kb_patch).abs().max().item()
+        print(f"  Patch embed diff: {patch_diff:.2e} {'PASS' if patch_diff < ATOL_STRICT else 'FAIL'}")
+        assert patch_diff < ATOL_STRICT
+        
+        # Test embedding norm
+        embeddings = hf_patch.flatten(2).transpose(1, 2)
+        with torch.no_grad():
+            hf_norm_out = hf_model.swinv2.embeddings.norm(embeddings)
+            kb_norm_out = kb_model.embeddings.norm(embeddings)
+        
+        norm_diff = (hf_norm_out - kb_norm_out).abs().max().item()
+        print(f"  Embed norm diff: {norm_diff:.2e} {'PASS' if norm_diff < ATOL_STRICT else 'FAIL'}")
+        assert norm_diff < ATOL_STRICT
+        
+        # Test classifier head
+        final_dim = int(embed_dim * 2 ** (len(kb_config['depths']) - 1))
+        hidden = torch.randn(1, final_dim, device=DEVICE, dtype=DTYPE)
+        with torch.no_grad():
+            hf_cls = hf_model.classifier(hidden)
+            kb_cls = kb_model.classifier(hidden)
+        
+        cls_diff = (hf_cls - kb_cls).abs().max().item()
+        print(f"  Classifier diff: {cls_diff:.2e} {'PASS' if cls_diff < ATOL_STRICT else 'FAIL'}")
+        assert cls_diff < ATOL_STRICT
+        
+        print("\n  All component tests passed!")
+        return
+    
+    # Standard architecture component tests
     # Get components in an architecture-agnostic way
     try:
         hf_embed, hf_layers, hf_norm, hf_mlp = _get_hf_components(hf_model)

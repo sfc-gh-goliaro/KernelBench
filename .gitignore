@@ -18,4 +18,5 @@ CLAUDE.md
 flash-linear-attention/
 transformers/
 vllm/
+sglang/
 test.py
