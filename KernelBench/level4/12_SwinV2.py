@@ -32,7 +32,7 @@ HuggingFace weight structure (Swinv2ForImageClassification):
 Tested against: microsoft/swinv2-large-patch4-window12-192-22k
 
 This model uses level1 operators from KernelBench:
-- WindowPartition2D from level1/vision/9_WindowPartition2D (pad/shift/partition + reverse)
+- WindowPartition2D from level1/vision/8_WindowPartition2D (pad/shift/partition + reverse)
 - ShiftedWindowAttention from level1/attention/8_ShiftedWindowAttention (SwinV2 window attention)
 - PatchEmbed2D from level1/vision/1_PatchEmbed2D (patch embedding via Conv2d)
 - PatchMerging from level1/vision/3_PatchMerging (spatial downsampling between stages)
@@ -55,7 +55,7 @@ from ..level1.matmul._10_Linear import Model as Linear
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.vision._1_PatchEmbed2D import Model as PatchEmbed2D
 from ..level1.vision._3_PatchMerging import Model as PatchMerging
-from ..level1.vision._9_WindowPartition2D import Model as WindowPartition2D
+from ..level1.vision._8_WindowPartition2D import Model as WindowPartition2D
 from ..level1.attention._6_ShiftedWindowAttention import Model as ShiftedWindowAttention
 
 
@@ -348,7 +348,7 @@ class Model(nn.Module):
       classifier -> self.classifier
 
     Uses level1 operators:
-    - WindowPartition2D from level1/vision/9_WindowPartition2D (window partition/reverse)
+    - WindowPartition2D from level1/vision/8_WindowPartition2D (window partition/reverse)
     - ShiftedWindowAttention from level1/attention/8_ShiftedWindowAttention
     - PatchEmbed2D from level1/vision/1_PatchEmbed2D (patch embedding)
     - PatchMerging from level1/vision/3_PatchMerging (spatial downsampling)

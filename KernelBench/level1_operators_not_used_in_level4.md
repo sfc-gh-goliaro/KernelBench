@@ -358,18 +358,14 @@ For reference, these 37 operators ARE currently imported and used in level4 mode
 | `_4_GumbelSoftmax.py` | GumbelSoftmax | Gumbel softmax |
 | `_5_ReconstructionLoss.py` | ReconstructionLoss | Reconstruction loss |
 
-### vision/ (8 operators not used)
+### vision/ (4 operators not used)
 
 | File | Operator Name | Description |
 |------|---------------|-------------|
-| `_1_PatchEmbed2D.py` | PatchEmbed2D | 2D patch embedding |
-| `_2_PatchEmbed3D.py` | PatchEmbed3D | 3D patch embedding |
-| `_3_PatchMerging.py` | PatchMerging | Patch merging |
 | `_4_CLS_Pooling.py` | CLS_Pooling | CLS token pooling |
 | `_5_VisionProjection.py` | VisionProjection | Vision projection |
-| `_6_RoPE_3D.py` | RoPE_3D | 3D rotary position embedding |
-| `_7_Resampler.py` | Resampler | Vision resampler |
-| `_8_ResidualBlock.py` | ResidualBlock | Residual block |
+| `_6_Resampler.py` | Resampler | Vision resampler |
+| `_7_ResidualBlock.py` | ResidualBlock | Residual block |
 
 ---
 
