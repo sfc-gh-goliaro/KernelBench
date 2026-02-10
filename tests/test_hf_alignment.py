@@ -475,7 +475,7 @@ def _build_qwen2vl_key_mapping(hf_state, kb_state) -> dict:
     KB level1 operator wrappers add extra nesting:
       Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
       LayerNorm: .ln.weight/.ln.bias -> HF: .weight/.bias
-      PatchEmbed3D: .patch_embed_3d.proj. -> HF: .proj.
+      PatchEmbed3D: .proj. -> HF: .proj. (PatchEmbed inherits PatchEmbed3D directly)
       PatchMerger MLP: .mlp_fc1. -> HF: .mlp.0., .mlp_fc2. -> HF: .mlp.2.
       Linear: no extra nesting (weight/bias stored directly)
     """
@@ -492,8 +492,8 @@ def _build_qwen2vl_key_mapping(hf_state, kb_state) -> dict:
         # Unwrap level1 LayerNorm wrapper (.ln.weight -> .weight, .ln.bias -> .bias)
         unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
         
-        # Unwrap level1 PatchEmbed3D wrapper (.patch_embed_3d.proj. -> .proj.)
-        unwrapped = unwrapped.replace('.patch_embed_3d.proj.', '.proj.')
+        # PatchEmbed now inherits from PatchEmbed3D directly, so the key
+        # path is already .proj.weight / .proj.bias (no wrapper nesting).
         
         # Unwrap PatchMerger MLP level1 Linear wrappers (.mlp_fc1. -> .mlp.0., .mlp_fc2. -> .mlp.2.)
         unwrapped = unwrapped.replace('.mlp_fc1.', '.mlp.0.').replace('.mlp_fc2.', '.mlp.2.')

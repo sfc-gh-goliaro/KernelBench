@@ -65,6 +65,9 @@ Tested against: Qwen/Qwen3-Omni-30B-A3B-Instruct
 This model uses level1 operators from KernelBench:
 - Linear from level1/matmul/_10_Linear
 - Embedding from level1/embeddings/_2_Embedding
+- RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
+- MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
+- VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
 - GELU from level1/activations/_8_GELU
 - Swish (SiLU) from level1/activations/_7_Swish
 - MatMul from level1/matmul/_1_MatMul
@@ -83,6 +86,9 @@ from ..level1.embeddings._2_Embedding import Model as Embedding
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.matmul._1_MatMul import Model as MatMul
+from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
+from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
+from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEmbedding
 
 
 # ============================================================================
@@ -113,105 +119,6 @@ class RMSNorm(nn.Module):
         return self.weight * hidden_states.to(input_dtype)
 
 
-# ============================================================================
-# Rotary Position Embeddings
-# ============================================================================
-
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb_vision(
-    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Apply rotary position embedding to vision Q/K tensors."""
-    orig_q_dtype = q.dtype
-    orig_k_dtype = k.dtype
-    q, k = q.float(), k.float()
-    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed.to(orig_q_dtype), k_embed.to(orig_k_dtype)
-
-
-def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
-    """Apply rotary position embedding to Q/K tensors (text decoder)."""
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
-
-
-class VisionRotaryEmbedding(nn.Module):
-    """Rotary embedding for vision encoder (2D spatial positions)."""
-    def __init__(self, dim: int, theta: float = 10000.0):
-        super().__init__()
-        self.dim = dim
-        self.theta = theta
-        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-        self._inv_freq_float32 = inv_freq
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-    def _get_inv_freq(self) -> torch.Tensor:
-        if self._inv_freq_float32.device != self.inv_freq.device:
-            self._inv_freq_float32 = self._inv_freq_float32.to(device=self.inv_freq.device)
-        return self._inv_freq_float32
-
-    def forward(self, seqlen: int) -> torch.Tensor:
-        inv_freq = self._get_inv_freq()
-        seq = torch.arange(seqlen, device=inv_freq.device, dtype=torch.float32)
-        freqs = torch.outer(seq, inv_freq)
-        return freqs
-
-
-class ThinkerTextRotaryEmbedding(nn.Module):
-    """Rotary embedding for the LLM with interleaved M-RoPE."""
-    def __init__(self, dim: int, rope_theta: float = 1000000.0,
-                 mrope_section: Optional[List[int]] = None):
-        super().__init__()
-        if mrope_section is None:
-            mrope_section = [24, 20, 20]
-        self.mrope_section = mrope_section
-        inv_freq = 1.0 / (
-            rope_theta ** (torch.arange(0, dim, 2, dtype=torch.float) / dim)
-        )
-        self._inv_freq_float32 = inv_freq
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.attention_scaling = 1.0
-
-    def _get_inv_freq(self) -> torch.Tensor:
-        if self._inv_freq_float32.device != self.inv_freq.device:
-            self._inv_freq_float32 = self._inv_freq_float32.to(device=self.inv_freq.device)
-        return self._inv_freq_float32
-
-    def apply_interleaved_mrope(self, freqs, mrope_section):
-        """Apply interleaved MRoPE to 3D rotary embeddings."""
-        freqs_t = freqs[0].clone()
-        for dim_idx, offset in enumerate((1, 2), start=1):
-            length = mrope_section[dim_idx] * 3
-            idx = slice(offset, length, 3)
-            freqs_t[..., idx] = freqs[dim_idx, ..., idx]
-        return freqs_t
-
-    @torch.no_grad()
-    def forward(self, x: torch.Tensor, position_ids: torch.Tensor):
-        if position_ids.ndim == 2:
-            position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
-        inv_freq = self._get_inv_freq()
-        inv_freq_expanded = inv_freq[None, None, :, None].expand(
-            3, position_ids.shape[1], -1, 1
-        )
-        position_ids_expanded = position_ids[:, :, None, :].float()
-        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-        freqs = self.apply_interleaved_mrope(freqs, self.mrope_section)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos() * self.attention_scaling
-        sin = emb.sin() * self.attention_scaling
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
 # ============================================================================
@@ -510,16 +417,18 @@ class VisionMLP(nn.Module):
 
 
 class VisionAttention(nn.Module):
-    """Vision encoder attention with rotary position embedding."""
+    """Vision encoder attention with rotary position embedding.
+    Uses level1 RotaryEmbedding for the rotate_half operation."""
     def __init__(self, dim: int, num_heads: int):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.num_key_value_groups = 1
         self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.proj = nn.Linear(dim, dim)
         self.scaling = self.head_dim ** -0.5
+        # Level1 RotaryEmbedding for the core rotate_half operation
+        self.rotary = RotaryEmbedding(self.head_dim, max_seq_len=1, base=10000.0)
 
     def forward(
         self,
@@ -534,10 +443,17 @@ class VisionAttention(nn.Module):
             .permute(1, 0, 2, 3)
             .unbind(0)
         )
+        # Apply vision rotary embedding using level1 RotaryEmbedding
         cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb_vision(
-            query_states, key_states, cos, sin
+        orig_dtype = query_states.dtype
+        q_float, k_float = query_states.float(), key_states.float()
+        cos_f = cos.unsqueeze(-2).float()
+        sin_f = sin.unsqueeze(-2).float()
+        query_states, key_states = self.rotary.apply_rotary(
+            q_float, k_float, cos_f, sin_f
         )
+        query_states = query_states.to(orig_dtype)
+        key_states = key_states.to(orig_dtype)
 
         query_states = query_states.transpose(0, 1).unsqueeze(0)
         key_states = key_states.transpose(0, 1).unsqueeze(0)
@@ -674,41 +590,6 @@ class VisionEncoder(nn.Module):
             for _ in range(len(deepstack_visual_indexes))
         ])
 
-    def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
-        merge_size = self.spatial_merge_size
-        max_hw = int(grid_thw[:, 1:].max().item())
-        freq_table = self.rotary_pos_emb(max_hw)
-        device = freq_table.device
-
-        total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
-        pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
-
-        offset = 0
-        for num_frames, height, width in grid_thw:
-            merged_h, merged_w = height // merge_size, width // merge_size
-            block_rows = torch.arange(merged_h, device=device)
-            block_cols = torch.arange(merged_w, device=device)
-            intra_row = torch.arange(merge_size, device=device)
-            intra_col = torch.arange(merge_size, device=device)
-
-            row_idx = block_rows[:, None, None, None] * merge_size + intra_row[None, None, :, None]
-            col_idx = block_cols[None, :, None, None] * merge_size + intra_col[None, None, None, :]
-
-            row_idx = row_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
-            col_idx = col_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
-
-            coords = torch.stack((row_idx, col_idx), dim=-1)
-            if num_frames > 1:
-                coords = coords.repeat(num_frames, 1)
-
-            num_tokens = coords.shape[0]
-            pos_ids[offset: offset + num_tokens] = coords
-            offset += num_tokens
-
-        embeddings = freq_table[pos_ids]
-        embeddings = embeddings.flatten(1)
-        return embeddings
-
     def fast_pos_embed_interpolate(self, grid_thw: torch.Tensor) -> torch.Tensor:
         grid_ts, grid_hs, grid_ws = grid_thw[:, 0], grid_thw[:, 1], grid_thw[:, 2]
         device = self.pos_embed.weight.device
@@ -777,12 +658,10 @@ class VisionEncoder(nn.Module):
         pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
         hidden_states = hidden_states + pos_embeds
 
-        rotary_pos_emb = self.rot_pos_emb(grid_thw)
         seq_len, _ = hidden_states.size()
         hidden_states = hidden_states.reshape(seq_len, -1)
-        rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
-        emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
-        position_embeddings = (emb.cos(), emb.sin())
+        # Compute vision rotary position embeddings using level1 operator
+        position_embeddings = self.rotary_pos_emb(grid_thw, self.spatial_merge_size)
 
         cu_seqlens = torch.repeat_interleave(
             grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]
@@ -847,6 +726,8 @@ class ThinkerTextAttention(nn.Module):
         # QK normalization
         self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(head_dim, eps=rms_norm_eps)
+        # Level1 RotaryEmbedding for the core rotate_half operation
+        self.rotary = RotaryEmbedding(head_dim, max_seq_len=1, base=10000.0)
 
         # KV cache (populated during generation)
         self._cached_k: Optional[torch.Tensor] = None
@@ -875,8 +756,13 @@ class ThinkerTextAttention(nn.Module):
             bsz, q_len, self.num_kv_heads, self.head_dim
         ).transpose(1, 2)
 
+        # Apply pre-assembled M-RoPE cos/sin using level1 RotaryEmbedding rotate_half
         cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        cos = cos.unsqueeze(1)  # (batch, 1, seq, head_dim)
+        sin = sin.unsqueeze(1)
+        query_states, key_states = self.rotary.apply_rotary(
+            query_states, key_states, cos, sin
+        )
 
         # KV cache: append and use full history
         if use_cache:
@@ -1192,8 +1078,9 @@ class Model(nn.Module):
             ))
         self.norm = RMSNorm(hidden_size, eps=rms_norm_eps)
 
-        self.rotary_emb = ThinkerTextRotaryEmbedding(
-            head_dim, rope_theta=rope_theta, mrope_section=mrope_section,
+        # Level1 MultimodalRotaryEmbedding for LLM M-RoPE (interleaved mode for Qwen3-Omni)
+        self.rotary_emb = MultimodalRotaryEmbedding(
+            head_dim, base=rope_theta, mrope_section=mrope_section, mode="interleaved",
         )
 
         # LM head

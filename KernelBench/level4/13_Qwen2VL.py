@@ -42,6 +42,8 @@ This model uses level1 operators from KernelBench:
 - Swish (SiLU) from level1/activations/_7_Swish
 - Sigmoid from level1/activations/_3_Sigmoid
 - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
+- MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
+- VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
 - MatMul from level1/matmul/_1_MatMul
 
 Note: Using level1 wrappers changes the state-dict key names (e.g.
@@ -60,12 +62,14 @@ from ..level1.matmul._10_Linear import Model as Linear
 from ..level1.normalization._6_LayerNorm import Model as LayerNorm
 from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.embeddings._2_Embedding import Model as Embedding
-from ..level1.vision._2_PatchEmbed3D import Model as PatchEmbed3DOp
+from ..level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.activations._3_Sigmoid import Model as Sigmoid
 from ..level1.matmul._1_MatMul import Model as MatMul
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
+from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
+from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEmbedding
 
 
 # ============================================================================
@@ -80,67 +84,8 @@ VARIANTS: Dict[str, str] = {
 
 
 # ============================================================================
-# M-RoPE cos/sin assembly (Qwen2-VL specific wiring)
-# ============================================================================
-
-def _assemble_mrope_cos_sin(cos, sin, mrope_section, unsqueeze_dim=1):
-    """Interleave the 3 M-RoPE position dimensions across head_dim sections.
-    
-    cos/sin shape: (3, batch, seq, head_dim) from M-RoPE computation.
-    mrope_section: list of 3 ints giving the section sizes per dimension.
-    Returns cos, sin each of shape (1, batch, 1, seq, head_dim) or similar
-    depending on unsqueeze_dim.
-    """
-    mrope_section = mrope_section * 2  # doubled because cos/sin cover full head_dim
-    cos = torch.cat(
-        [m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1
-    ).unsqueeze(unsqueeze_dim)
-    sin = torch.cat(
-        [m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1
-    ).unsqueeze(unsqueeze_dim)
-    return cos, sin
-
-
-# ============================================================================
 # Vision Encoder Components
 # ============================================================================
-
-class PatchEmbed(nn.Module):
-    """3D patch embedding using Conv3d (temporal + spatial).
-    Uses level1 PatchEmbed3D operator for the Conv3d projection."""
-    def __init__(
-        self,
-        patch_size: int = 14,
-        temporal_patch_size: int = 2,
-        in_channels: int = 3,
-        embed_dim: int = 1152,
-    ):
-        super().__init__()
-        self.patch_size = patch_size
-        self.temporal_patch_size = temporal_patch_size
-        self.in_channels = in_channels
-        self.embed_dim = embed_dim
-        # Use level1 PatchEmbed3D for the Conv3d projection
-        self.patch_embed_3d = PatchEmbed3DOp(
-            img_size=patch_size,  # dummy, only proj is used
-            num_frames=temporal_patch_size,  # dummy, only proj is used
-            patch_size=patch_size,
-            temporal_patch_size=temporal_patch_size,
-            in_channels=in_channels,
-            embed_dim=embed_dim,
-            bias=False,
-        )
-        # Alias for weight access (e.g. dtype casting)
-        self.proj = self.patch_embed_3d.proj
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        target_dtype = self.proj.weight.dtype
-        hidden_states = hidden_states.view(
-            -1, self.in_channels, self.temporal_patch_size, self.patch_size, self.patch_size
-        )
-        hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(-1, self.embed_dim)
-        return hidden_states
-
 
 class VisionMLP(nn.Module):
     """Vision encoder MLP with configurable activation.
@@ -176,7 +121,6 @@ class VisionAttention(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.num_key_value_groups = 1  # needed for repeat_kv path
         self.qkv = Linear(dim, dim * 3, bias=True)
         self.proj = Linear(dim, dim, bias=True)
         self.scaling = self.head_dim ** -0.5
@@ -299,19 +243,16 @@ class VisionEncoder(nn.Module):
     ):
         super().__init__()
         self.spatial_merge_size = spatial_merge_size
-        self.patch_embed = PatchEmbed(
+        self.patch_embed = PatchEmbed3D(
             patch_size=patch_size,
             temporal_patch_size=temporal_patch_size,
             in_channels=in_channels,
             embed_dim=embed_dim,
+            bias=False,
         )
         head_dim = embed_dim // num_heads
-        # Vision rotary: use level1 RotaryEmbedding just for inv_freq computation.
-        # We use head_dim//2 because vision RoPE covers 2D (h, w) positions,
-        # each using head_dim//4 frequencies, then concatenated and doubled.
-        self.rotary_pos_emb = RotaryEmbedding(
-            head_dim // 2, max_seq_len=1, base=10000.0
-        )
+        # Level1 VisionRotaryEmbedding for 2D spatial position embeddings
+        self.rotary_pos_emb = VisionRotaryEmbedding(head_dim // 2)
         self.blocks = nn.ModuleList([
             Qwen2VLVisionBlock(embed_dim, num_heads, mlp_ratio, hidden_act)
             for _ in range(depth)
@@ -320,38 +261,6 @@ class VisionEncoder(nn.Module):
             dim=hidden_size, context_dim=embed_dim,
             spatial_merge_size=spatial_merge_size,
         )
-
-    def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
-        """Compute rotary position embeddings for vision patches.
-        Uses inv_freq from the level1 RotaryEmbedding operator."""
-        pos_ids = []
-        for t, h, w in grid_thw:
-            hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
-            hpos_ids = hpos_ids.reshape(
-                h // self.spatial_merge_size,
-                self.spatial_merge_size,
-                w // self.spatial_merge_size,
-                self.spatial_merge_size,
-            )
-            hpos_ids = hpos_ids.permute(0, 2, 1, 3).flatten()
-
-            wpos_ids = torch.arange(w).unsqueeze(0).expand(h, -1)
-            wpos_ids = wpos_ids.reshape(
-                h // self.spatial_merge_size,
-                self.spatial_merge_size,
-                w // self.spatial_merge_size,
-                self.spatial_merge_size,
-            )
-            wpos_ids = wpos_ids.permute(0, 2, 1, 3).flatten()
-            pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
-        pos_ids = torch.cat(pos_ids, dim=0)
-        max_grid_size = grid_thw[:, 1:].max()
-        # Compute freqs using inv_freq from level1 RotaryEmbedding
-        inv_freq = self.rotary_pos_emb.inv_freq.float()
-        seq = torch.arange(max_grid_size, device=inv_freq.device, dtype=torch.float32)
-        rotary_pos_emb_full = torch.outer(seq, inv_freq)  # (max_grid_size, head_dim//4)
-        rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
-        return rotary_pos_emb
 
     def forward(
         self,
@@ -366,9 +275,8 @@ class VisionEncoder(nn.Module):
             Merged vision embeddings of shape (total_merged_patches, hidden_size)
         """
         hidden_states = self.patch_embed(hidden_states)
-        rotary_pos_emb = self.rot_pos_emb(grid_thw)
-        emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
-        position_embeddings = (emb.cos(), emb.sin())
+        # Compute vision rotary position embeddings using level1 operator
+        position_embeddings = self.rotary_pos_emb(grid_thw, self.spatial_merge_size)
 
         cu_seqlens = torch.repeat_interleave(
             grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]
@@ -389,6 +297,7 @@ class VisionEncoder(nn.Module):
 # Language Model (Decoder) Components
 # ============================================================================
 
+
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """Repeat KV heads for GQA."""
     batch, num_kv_heads, slen, head_dim = hidden_states.shape
@@ -402,13 +311,15 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 class Qwen2VLAttention(nn.Module):
     """Multi-headed attention with GQA and M-RoPE, with optional KV cache.
-    Uses level1 Linear and RotaryEmbedding operators."""
+    Uses level1 Linear and RotaryEmbedding operators.
+    
+    Position embeddings (cos, sin) arrive pre-assembled from the level1
+    MultimodalRotaryEmbedding operator at the model level."""
     def __init__(
         self,
         hidden_size: int,
         num_heads: int,
         num_kv_heads: int,
-        mrope_section: List[int],
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -417,7 +328,6 @@ class Qwen2VLAttention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.num_key_value_groups = num_heads // num_kv_heads
         self.scaling = self.head_dim ** -0.5
-        self.mrope_section = mrope_section
 
         self.q_proj = Linear(hidden_size, num_heads * self.head_dim, bias=True)
         self.k_proj = Linear(hidden_size, num_kv_heads * self.head_dim, bias=True)
@@ -447,9 +357,10 @@ class Qwen2VLAttention(nn.Module):
         key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
-        # Apply M-RoPE: assemble interleaved cos/sin, then use level1 RotaryEmbedding
+        # Apply pre-assembled M-RoPE cos/sin using level1 RotaryEmbedding rotate_half
         cos, sin = position_embeddings
-        cos, sin = _assemble_mrope_cos_sin(cos, sin, self.mrope_section, unsqueeze_dim=1)
+        cos = cos.unsqueeze(1)  # (batch, 1, seq, head_dim)
+        sin = sin.unsqueeze(1)
         query_states, key_states = self.rotary.apply_rotary(
             query_states, key_states, cos, sin
         )
@@ -499,11 +410,10 @@ class Qwen2VLDecoderLayer(nn.Module):
         num_kv_heads: int,
         intermediate_size: int,
         rms_norm_eps: float,
-        mrope_section: List[int],
     ):
         super().__init__()
         self.self_attn = Qwen2VLAttention(
-            hidden_size, num_heads, num_kv_heads, mrope_section
+            hidden_size, num_heads, num_kv_heads
         )
         self.mlp = Qwen2MLP(hidden_size, intermediate_size)
         self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps, learnable_weight=True, dim=-1)
@@ -624,16 +534,16 @@ class Model(nn.Module):
                 num_kv_heads=num_key_value_heads,
                 intermediate_size=intermediate_size,
                 rms_norm_eps=rms_norm_eps,
-                mrope_section=mrope_section,
             )
             for _ in range(num_hidden_layers)
         ])
         self.norm = RMSNorm(hidden_size, eps=rms_norm_eps, learnable_weight=True, dim=-1)
 
         head_dim = hidden_size // num_attention_heads
-        # Level1 RotaryEmbedding for LLM M-RoPE (used for inv_freq only;
-        # the 3D M-RoPE cos/sin assembly is done in _compute_mrope_cos_sin)
-        self.rotary_emb = RotaryEmbedding(head_dim, max_seq_len=1, base=rope_theta)
+        # Level1 MultimodalRotaryEmbedding for LLM M-RoPE (chunked mode for Qwen2-VL)
+        self.rotary_emb = MultimodalRotaryEmbedding(
+            head_dim, base=rope_theta, mrope_section=mrope_section, mode="chunked",
+        )
 
         # LM head
         self.lm_head = Linear(hidden_size, vocab_size, bias=False)
@@ -872,19 +782,8 @@ class Model(nn.Module):
             )
             causal_mask.masked_fill_(causal_triu.unsqueeze(0).unsqueeze(0), min_dtype)
 
-        # Compute M-RoPE cos/sin from 3D position_ids using level1 RotaryEmbedding inv_freq
-        # position_ids: (3, batch_size, seq_len) -- temporal, height, width
-        inv_freq = self.rotary_emb.inv_freq.float()
-        inv_freq_expanded = inv_freq[None, None, :, None].expand(
-            3, position_ids.shape[1], -1, 1
-        )
-        position_ids_expanded = position_ids[:, :, None, :].float()
-        with torch.no_grad():
-            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos()
-            sin = emb.sin()
-        position_embeddings = (cos.to(dtype=inputs_embeds.dtype), sin.to(dtype=inputs_embeds.dtype))
+        # Compute M-RoPE cos/sin using level1 MultimodalRotaryEmbedding
+        position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 
         # Decoder layers
         hidden_states = inputs_embeds

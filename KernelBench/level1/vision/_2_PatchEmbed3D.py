@@ -12,9 +12,19 @@ class Model(nn.Module):
     Video patch embedding via Conv3d for temporal-spatial patches.
     Creates a 3D grid of tokens from video frames.
     
-    Shapes:
-        Input: (batch, channels, time, height, width)
-        Output: (batch, num_patches, embed_dim)
+    Supports two input modes:
+    
+    1. **Full video** (default):
+       Input:  (batch, channels, time, height, width)
+       Output: (batch, num_patches, embed_dim)
+       The Conv3d strides over the full spatial-temporal volume.
+    
+    2. **Pre-chunked patches** (e.g. Qwen2-VL):
+       Input:  (num_patches, channels, temporal_patch_size, patch_size, patch_size)
+               Each element is already a single 3D patch.
+       Output: (num_patches, embed_dim)
+       The Conv3d kernel covers the entire input, producing one vector per patch.
+       This mode is auto-detected when spatial dims equal the Conv3d kernel size.
     """
     
     def __init__(self, img_size: int = 224, num_frames: int = 8, patch_size: int = 16,
@@ -37,6 +47,7 @@ class Model(nn.Module):
         self.num_frames = num_frames
         self.patch_size = patch_size
         self.temporal_patch_size = temporal_patch_size
+        self.in_channels = in_channels
         self.embed_dim = embed_dim
         
         self.num_spatial_patches = (img_size // patch_size) ** 2
@@ -55,22 +66,42 @@ class Model(nn.Module):
         """
         Embed video patches.
         
-        Args:
-            x: Input video (batch, channels, time, height, width)
-            
-        Returns:
-            Patch embeddings (batch, num_patches, embed_dim)
+        Accepts three input layouts:
+        
+        1. Full video ``(batch, channels, time, height, width)`` —
+           returns ``(batch, num_patches, embed_dim)``.
+        2. Pre-chunked 5-D patches
+           ``(num_patches, channels, temporal_patch_size, patch_size, patch_size)``
+           where each element is a single 3-D patch —
+           returns ``(num_patches, embed_dim)``.
+        3. Flattened patches ``(num_patches, channels * temporal_patch_size * patch_size * patch_size)``
+           (used by Qwen2-VL which flattens each patch into a vector) —
+           automatically reshaped to layout 2, returns ``(num_patches, embed_dim)``.
         """
-        # Project patches: (batch, embed_dim, T/temp_patch, H/patch, W/patch)
-        x = self.proj(x)
-        
-        # Flatten all spatial-temporal dimensions
-        x = x.flatten(2)  # (batch, embed_dim, num_patches)
-        
-        # Transpose to (batch, num_patches, embed_dim)
-        x = x.transpose(1, 2)
-        
-        return x
+        target_dtype = self.proj.weight.dtype
+        x = x.to(dtype=target_dtype)
+
+        # Layout 3: flat 2-D input -> reshape to 5-D pre-chunked patches
+        if x.ndim == 2:
+            x = x.view(-1, self.in_channels, self.temporal_patch_size,
+                        self.patch_size, self.patch_size)
+
+        # Detect pre-chunked mode: spatial dims match kernel size exactly,
+        # so Conv3d produces a single (1,1,1) output per patch.
+        _, _, t, h, w = x.shape
+        pre_chunked = (t == self.temporal_patch_size and
+                       h == self.patch_size and
+                       w == self.patch_size)
+
+        if pre_chunked:
+            # (N, C, T_ps, H_ps, W_ps) -> Conv3d -> (N, embed_dim, 1, 1, 1)
+            return self.proj(x).view(-1, self.embed_dim)
+        else:
+            # (batch, C, T, H, W) -> Conv3d -> (batch, embed_dim, T', H', W')
+            x = self.proj(x)
+            x = x.flatten(2)           # (batch, embed_dim, num_patches)
+            x = x.transpose(1, 2)      # (batch, num_patches, embed_dim)
+            return x
 
 
 # ============================================================================
