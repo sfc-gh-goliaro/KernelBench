@@ -53,6 +53,9 @@ transformers = pytest.importorskip("transformers")
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor
 from transformers import T5ForConditionalGeneration, Swinv2ForImageClassification
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
+from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen3VLForConditionalGeneration
+from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
 import json
 import re
 import requests
@@ -107,6 +110,10 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     # Qwen2-VL
     "Qwen/Qwen2-VL-2B-Instruct": "KernelBench.level4.13_Qwen2VL",
     "Qwen/Qwen2-VL-7B-Instruct": "KernelBench.level4.13_Qwen2VL",
+    # Qwen3-VL
+    "Qwen/Qwen3-VL-8B-Instruct": "KernelBench.level4.30_Qwen3VL",
+    # Qwen3-Omni-MoE
+    "Qwen/Qwen3-Omni-30B-A3B-Instruct": "KernelBench.level4.31_Qwen3OmniMoe",
     # Whisper
     "openai/whisper-tiny": "KernelBench.level4.14_Whisper",
     "openai/whisper-small": "KernelBench.level4.14_Whisper",
@@ -237,6 +244,25 @@ TEST_IMAGE_URLS = [
     # A kitchen scene (640x480)
     "http://images.cocodataset.org/val2017/000000087038.jpg",
 ]
+
+def _count_consecutive_matches(hf_tokens: torch.Tensor, kb_tokens: torch.Tensor) -> Tuple[int, int]:
+    """Count consecutive matching tokens from the start.
+    
+    Handles different lengths (e.g. HF stops at EOS, KB generates full length).
+    Returns (consecutive_matches, comparable_length) where comparable_length is
+    the minimum of the two token sequences.
+    """
+    min_len = min(len(hf_tokens), len(kb_tokens))
+    if min_len == 0:
+        return 0, 0
+    matches = (hf_tokens[:min_len] == kb_tokens[:min_len])
+    if matches.all():
+        return min_len, min_len
+    first_mismatch_indices = (~matches).nonzero(as_tuple=True)[0]
+    if len(first_mismatch_indices) > 0:
+        return first_mismatch_indices[0].item(), min_len
+    return min_len, min_len
+
 
 def _load_test_images() -> List[Tuple[Image.Image, str]]:
     """Download and return (PIL image, URL) pairs from TEST_IMAGE_URLS."""
@@ -436,6 +462,178 @@ def _build_whisper_key_mapping(hf_state, kb_state) -> dict:
     return mapping
 
 
+def _build_qwen2vl_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for Qwen2-VL models.
+    
+    HF Qwen2VLForConditionalGeneration uses:
+      model.visual.* -> KB: visual.*
+      model.language_model.embed_tokens.weight -> KB: embed_tokens.embedding.weight
+      model.language_model.layers.{i}.* -> KB: layers.{i}.*
+      model.language_model.norm.weight -> KB: norm.weight
+      lm_head.weight -> KB: lm_head.weight
+    
+    KB level1 operator wrappers add extra nesting:
+      Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
+      Linear: no extra nesting (weight/bias stored directly)
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        # Unwrap level1 Embedding wrapper for embed_tokens
+        unwrapped = kb_key
+        if unwrapped.startswith('embed_tokens.embedding.'):
+            unwrapped = unwrapped.replace('embed_tokens.embedding.', 'embed_tokens.')
+        
+        # Try with model.language_model. prefix for LLM backbone weights
+        # (embed_tokens, layers, norm, rotary_emb)
+        if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
+            hf_key = 'model.language_model.' + unwrapped
+            if hf_key in hf_state:
+                mapping[kb_key] = hf_key
+                continue
+        
+        # Try with model. prefix for visual weights
+        if unwrapped.startswith('visual.'):
+            hf_key = 'model.' + unwrapped
+            if hf_key in hf_state:
+                mapping[kb_key] = hf_key
+                continue
+        
+        # Try direct match (lm_head.weight)
+        if unwrapped in hf_state:
+            mapping[kb_key] = unwrapped
+    
+    return mapping
+
+
+def _build_qwen3vl_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for Qwen3-VL models.
+    
+    HF Qwen3VLForConditionalGeneration uses:
+      model.visual.* -> KB: visual.*
+      model.language_model.embed_tokens.weight -> KB: embed_tokens.embedding.weight
+      model.language_model.layers.{i}.* -> KB: layers.{i}.*
+      model.language_model.norm.weight -> KB: norm.weight
+      lm_head.weight -> KB: lm_head.weight
+    
+    Key differences from Qwen2-VL:
+      - Vision MLP uses linear_fc1/linear_fc2 (same names in HF and KB)
+      - PatchMerger uses norm/linear_fc1/linear_fc2 (not ln_q/mlp.0/mlp.2)
+      - Has pos_embed (nn.Embedding) in vision encoder
+      - Has deepstack_merger_list in vision encoder
+      - Text attention has q_norm/k_norm
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        # Unwrap level1 Embedding wrapper for embed_tokens
+        unwrapped = kb_key
+        if unwrapped.startswith('embed_tokens.embedding.'):
+            unwrapped = unwrapped.replace('embed_tokens.embedding.', 'embed_tokens.')
+        
+        # Try with model.language_model. prefix for LLM backbone weights
+        if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
+            hf_key = 'model.language_model.' + unwrapped
+            if hf_key in hf_state:
+                mapping[kb_key] = hf_key
+                continue
+        
+        # Try with model. prefix for visual weights
+        if unwrapped.startswith('visual.'):
+            hf_key = 'model.' + unwrapped
+            if hf_key in hf_state:
+                mapping[kb_key] = hf_key
+                continue
+        
+        # Try direct match (lm_head.weight)
+        if unwrapped in hf_state:
+            mapping[kb_key] = unwrapped
+    
+    return mapping
+
+
+def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for Qwen3-Omni-MoE models.
+    
+    When loaded as Qwen3OmniMoeThinkerForConditionalGeneration, the HF state dict
+    has the 'thinker.' prefix stripped (via base_model_prefix). So the actual HF keys are:
+      audio_tower.* -> KB: audio_tower.*  (direct match)
+      visual.* -> KB: visual.*  (direct match)
+      model.embed_tokens.weight -> KB: embed_tokens.embedding.weight
+      model.layers.{i}.* -> KB: layers.{i}.*  (strip 'model.' prefix)
+      model.norm.weight -> KB: norm.weight
+      lm_head.weight -> KB: lm_head.weight  (direct match)
+    
+    Expert weights need special handling:
+      HF: model.layers.{i}.mlp.experts.{e}.{gate,up,down}_proj.weight (per-expert)
+      KB: layers.{i}.mlp.experts.gate_up_proj (fused 3D), layers.{i}.mlp.experts.down_proj (3D)
+    
+    Returns mapping for non-expert weights only. Expert weights are handled separately
+    in the copy_weights function via _fuse_qwen3omni_expert_weights.
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        # Skip fused expert parameters - handled separately
+        if '.mlp.experts.gate_up_proj' in kb_key or '.mlp.experts.down_proj' in kb_key:
+            continue
+        
+        unwrapped = kb_key
+        # Unwrap level1 Embedding wrapper for embed_tokens
+        if unwrapped.startswith('embed_tokens.embedding.'):
+            unwrapped = unwrapped.replace('embed_tokens.embedding.', 'embed_tokens.')
+        
+        # Try with model. prefix for LLM backbone weights
+        if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
+            hf_key = 'model.' + unwrapped
+            if hf_key in hf_state:
+                mapping[kb_key] = hf_key
+                continue
+        
+        # Direct match for audio_tower, visual, lm_head
+        if unwrapped in hf_state:
+            mapping[kb_key] = unwrapped
+            continue
+    
+    return mapping
+
+
+def _fuse_qwen3omni_expert_weights(hf_state, kb_state):
+    """Fuse per-expert HF weights into KB's fused 3D expert tensors.
+    
+    HF stores: model.layers.{i}.mlp.experts.{e}.gate_proj.weight  (intermediate, hidden)
+               model.layers.{i}.mlp.experts.{e}.up_proj.weight    (intermediate, hidden)
+               model.layers.{i}.mlp.experts.{e}.down_proj.weight  (hidden, intermediate)
+    
+    KB stores: layers.{i}.mlp.experts.gate_up_proj  (num_experts, 2*intermediate, hidden)
+               layers.{i}.mlp.experts.down_proj      (num_experts, hidden, intermediate)
+    """
+    fused_count = 0
+    for kb_key, kb_tensor in kb_state.items():
+        if '.mlp.experts.gate_up_proj' in kb_key:
+            # Extract layer index: layers.{i}.mlp.experts.gate_up_proj
+            layer_prefix = kb_key.replace('.mlp.experts.gate_up_proj', '')
+            num_experts = kb_tensor.shape[0]
+            for e in range(num_experts):
+                gate_key = f'model.{layer_prefix}.mlp.experts.{e}.gate_proj.weight'
+                up_key = f'model.{layer_prefix}.mlp.experts.{e}.up_proj.weight'
+                if gate_key in hf_state and up_key in hf_state:
+                    gate_w = hf_state[gate_key]  # (intermediate, hidden)
+                    up_w = hf_state[up_key]      # (intermediate, hidden)
+                    kb_tensor[e] = torch.cat([gate_w, up_w], dim=0)  # (2*intermediate, hidden)
+            fused_count += 1
+        elif '.mlp.experts.down_proj' in kb_key and '.mlp.experts.down_proj' == kb_key[kb_key.index('.mlp.experts.down_proj'):]:
+            # Extract layer index: layers.{i}.mlp.experts.down_proj
+            layer_prefix = kb_key.replace('.mlp.experts.down_proj', '')
+            num_experts = kb_tensor.shape[0]
+            for e in range(num_experts):
+                down_key = f'model.{layer_prefix}.mlp.experts.{e}.down_proj.weight'
+                if down_key in hf_state:
+                    kb_tensor[e] = hf_state[down_key]  # (hidden, intermediate)
+            fused_count += 1
+    return fused_count
+
+
 def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> None:
     """
     Copy weights from HuggingFace model to KernelBench model.
@@ -554,6 +752,130 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
         kb_model.load_state_dict(kb_state)
         return
     
+    if _is_qwen2vl_model(model_name):
+        explicit_mapping = _build_qwen2vl_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            # Skip vision rotary embedding (computed locally, different format)
+            if 'visual.rotary_pos_emb.inv_freq' in kb_key:
+                skipped_buffers += 1
+                continue
+            
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
+    if _is_qwen3vl_model(model_name):
+        explicit_mapping = _build_qwen3vl_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            # Skip vision rotary embedding (computed locally, different format)
+            if 'visual.rotary_pos_emb.inv_freq' in kb_key:
+                skipped_buffers += 1
+                continue
+            # Skip LLM rotary embedding inv_freq (computed locally)
+            if 'rotary_emb.inv_freq' in kb_key:
+                skipped_buffers += 1
+                continue
+            
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
+    if _is_qwen3omni_model(model_name):
+        explicit_mapping = _build_qwen3omni_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            # Skip fused expert parameters (handled below)
+            if '.mlp.experts.gate_up_proj' in kb_key or (
+                '.mlp.experts.down_proj' in kb_key and 
+                '.mlp.experts.down_proj' == kb_key[kb_key.index('.mlp.experts.down_proj'):]
+            ):
+                continue
+            # Skip vision rotary embedding (computed locally)
+            if 'visual.rotary_pos_emb.inv_freq' in kb_key:
+                skipped_buffers += 1
+                continue
+            # Skip LLM rotary embedding inv_freq (computed locally)
+            if 'rotary_emb.inv_freq' in kb_key:
+                skipped_buffers += 1
+                continue
+            # Skip audio positional embedding (computed locally)
+            if 'audio_tower.positional_embedding.positional_embedding' in kb_key:
+                skipped_buffers += 1
+                continue
+            
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        # Fuse per-expert weights into KB's 3D tensors
+        fused_count = _fuse_qwen3omni_expert_weights(hf_state, kb_state)
+        copied += fused_count
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights (+{fused_count} fused expert tensors), skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
     # Default: Llama/Falcon/Mistral/BLOOM/Mamba style
     # Detect HF model prefix (e.g., "model." for Llama, "transformer." for Falcon, "backbone." for Mamba2)
     hf_prefix = ""
@@ -640,6 +962,21 @@ def _is_swinv2_model(model_name: str) -> bool:
 def _is_whisper_model(model_name: str) -> bool:
     """Check if a model is a Whisper speech recognition model."""
     return "whisper" in model_name.lower()
+
+
+def _is_qwen2vl_model(model_name: str) -> bool:
+    """Check if a model is a Qwen2-VL vision-language model."""
+    return "qwen2-vl" in model_name.lower()
+
+
+def _is_qwen3vl_model(model_name: str) -> bool:
+    """Check if a model is a Qwen3-VL vision-language model."""
+    return "qwen3-vl" in model_name.lower()
+
+
+def _is_qwen3omni_model(model_name: str) -> bool:
+    """Check if a model is a Qwen3-Omni-MoE multimodal model."""
+    return "qwen3-omni" in model_name.lower()
 
 
 def _fix_mamba2_config_json(model_path: str) -> None:
@@ -792,6 +1129,162 @@ def _create_kb_whisper_config(hf_config) -> dict:
     }
 
 
+def _create_kb_qwen2vl_config(hf_config) -> dict:
+    """Create KernelBench config dict for Qwen2-VL vision-language models."""
+    vc = hf_config.vision_config
+    tc = hf_config.text_config
+    
+    # Get mrope_section from rope_scaling
+    rope_scaling = getattr(tc, 'rope_scaling', None) or {}
+    mrope_section = rope_scaling.get('mrope_section', [16, 24, 24])
+    rope_theta = getattr(tc, 'rope_theta', 1000000.0)
+    
+    return {
+        # Vision config
+        'vision_depth': vc.depth,
+        'vision_embed_dim': vc.embed_dim,
+        'vision_num_heads': vc.num_heads,
+        'vision_hidden_size': vc.hidden_size,
+        'vision_hidden_act': vc.hidden_act,
+        'vision_mlp_ratio': vc.mlp_ratio,
+        'in_channels': vc.in_channels,
+        'patch_size': vc.patch_size,
+        'temporal_patch_size': vc.temporal_patch_size,
+        'spatial_merge_size': vc.spatial_merge_size,
+        # LLM config
+        'hidden_size': tc.hidden_size,
+        'num_hidden_layers': tc.num_hidden_layers,
+        'num_attention_heads': tc.num_attention_heads,
+        'num_key_value_heads': tc.num_key_value_heads,
+        'intermediate_size': tc.intermediate_size,
+        'vocab_size': tc.vocab_size,
+        'rms_norm_eps': tc.rms_norm_eps,
+        'rope_theta': rope_theta,
+        'mrope_section': mrope_section,
+        # Special token ids
+        'image_token_id': hf_config.image_token_id,
+        'video_token_id': hf_config.video_token_id,
+        'vision_start_token_id': hf_config.vision_start_token_id,
+        'vision_end_token_id': hf_config.vision_end_token_id,
+    }
+
+
+def _create_kb_qwen3vl_config(hf_config) -> dict:
+    """Create KernelBench config dict for Qwen3-VL vision-language models."""
+    vc = hf_config.vision_config
+    tc = hf_config.text_config
+    
+    # Get mrope_section from rope_scaling (Qwen3-VL uses rope_scaling, not rope_parameters)
+    rope_scaling = getattr(tc, 'rope_scaling', None) or {}
+    mrope_section = rope_scaling.get('mrope_section', [24, 20, 20])
+    # rope_theta is a top-level attribute in the text config (not inside rope_scaling)
+    rope_theta = getattr(tc, 'rope_theta', 5000000.0)
+    
+    return {
+        # Vision config
+        'vision_depth': vc.depth,
+        'vision_hidden_size': vc.hidden_size,
+        'vision_out_hidden_size': vc.out_hidden_size,
+        'vision_num_heads': vc.num_heads,
+        'vision_intermediate_size': vc.intermediate_size,
+        'vision_hidden_act': vc.hidden_act,
+        'in_channels': vc.in_channels,
+        'patch_size': vc.patch_size,
+        'temporal_patch_size': vc.temporal_patch_size,
+        'spatial_merge_size': vc.spatial_merge_size,
+        'num_position_embeddings': vc.num_position_embeddings,
+        'deepstack_visual_indexes': vc.deepstack_visual_indexes,
+        # LLM config
+        'hidden_size': tc.hidden_size,
+        'num_hidden_layers': tc.num_hidden_layers,
+        'num_attention_heads': tc.num_attention_heads,
+        'num_key_value_heads': tc.num_key_value_heads,
+        'head_dim': getattr(tc, 'head_dim', 128),
+        'intermediate_size': tc.intermediate_size,
+        'vocab_size': tc.vocab_size,
+        'rms_norm_eps': tc.rms_norm_eps,
+        'rope_theta': rope_theta,
+        'mrope_section': mrope_section,
+        # Special token ids
+        'image_token_id': hf_config.image_token_id,
+        'video_token_id': hf_config.video_token_id,
+        'vision_start_token_id': hf_config.vision_start_token_id,
+        'vision_end_token_id': hf_config.vision_end_token_id,
+    }
+
+
+def _create_kb_qwen3omni_config(hf_config) -> dict:
+    """Create KernelBench config dict for Qwen3-Omni-MoE models."""
+    # The top-level config is Qwen3OmniMoeConfig, thinker_config has the sub-configs
+    tc_config = hf_config.thinker_config
+    vc = tc_config.vision_config
+    ac = tc_config.audio_config
+    tc = tc_config.text_config
+    
+    # Get mrope_section from rope_scaling
+    rope_scaling = getattr(tc, 'rope_scaling', None) or {}
+    mrope_section = rope_scaling.get('mrope_section', [24, 20, 20])
+    rope_theta = getattr(tc, 'rope_theta', 1000000.0)
+    
+    # head_dim: compute from hidden_size / num_attention_heads
+    head_dim = getattr(tc, 'head_dim', tc.hidden_size // tc.num_attention_heads)
+    
+    return {
+        # Audio config
+        'audio_num_mel_bins': ac.num_mel_bins,
+        'audio_d_model': ac.d_model,
+        'audio_encoder_layers': ac.encoder_layers,
+        'audio_encoder_attention_heads': ac.encoder_attention_heads,
+        'audio_encoder_ffn_dim': ac.encoder_ffn_dim,
+        'audio_activation_function': ac.activation_function,
+        'audio_max_source_positions': ac.max_source_positions,
+        'audio_output_dim': ac.output_dim,
+        'audio_n_window': ac.n_window,
+        'audio_n_window_infer': ac.n_window_infer,
+        'audio_conv_chunksize': ac.conv_chunksize,
+        'audio_downsample_hidden_size': ac.downsample_hidden_size,
+        'audio_scale_embedding': ac.scale_embedding,
+        # Vision config
+        'vision_depth': vc.depth,
+        'vision_hidden_size': vc.hidden_size,
+        'vision_out_hidden_size': vc.out_hidden_size,
+        'vision_num_heads': vc.num_heads,
+        'vision_intermediate_size': vc.intermediate_size,
+        'vision_hidden_act': vc.hidden_act,
+        'in_channels': vc.in_channels,
+        'patch_size': vc.patch_size,
+        'temporal_patch_size': vc.temporal_patch_size,
+        'spatial_merge_size': vc.spatial_merge_size,
+        'num_position_embeddings': vc.num_position_embeddings,
+        'deepstack_visual_indexes': vc.deepstack_visual_indexes,
+        # LLM config
+        'hidden_size': tc.hidden_size,
+        'num_hidden_layers': tc.num_hidden_layers,
+        'num_attention_heads': tc.num_attention_heads,
+        'num_key_value_heads': tc.num_key_value_heads,
+        'head_dim': head_dim,
+        'intermediate_size': tc.intermediate_size,
+        'vocab_size': tc.vocab_size,
+        'rms_norm_eps': tc.rms_norm_eps,
+        'rope_theta': rope_theta,
+        'mrope_section': mrope_section,
+        # MoE config
+        'num_experts': tc.num_experts,
+        'num_experts_per_tok': tc.num_experts_per_tok,
+        'moe_intermediate_size': tc.moe_intermediate_size,
+        'decoder_sparse_step': tc.decoder_sparse_step,
+        'mlp_only_layers': tc.mlp_only_layers,
+        'norm_topk_prob': tc.norm_topk_prob,
+        # Special token ids
+        'image_token_id': tc_config.image_token_id,
+        'video_token_id': tc_config.video_token_id,
+        'audio_token_id': tc_config.audio_token_id,
+        'vision_start_token_id': getattr(tc_config, 'vision_start_token_id', 151652),
+        'audio_start_token_id': tc_config.audio_start_token_id,
+        'position_id_per_seconds': tc_config.position_id_per_seconds,
+    }
+
+
 def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     """Create KernelBench model config from HuggingFace config.
     
@@ -816,6 +1309,15 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     # Check if this is a Whisper model
     if getattr(hf_config, 'model_type', None) == 'whisper':
         return _create_kb_whisper_config(hf_config)
+    # Check if this is a Qwen2-VL model
+    if getattr(hf_config, 'model_type', None) == 'qwen2_vl':
+        return _create_kb_qwen2vl_config(hf_config)
+    # Check if this is a Qwen3-VL model
+    if getattr(hf_config, 'model_type', None) == 'qwen3_vl':
+        return _create_kb_qwen3vl_config(hf_config)
+    # Check if this is a Qwen3-Omni-MoE model
+    if getattr(hf_config, 'model_type', None) == 'qwen3_omni_moe':
+        return _create_kb_qwen3omni_config(hf_config)
     # Get rope_scaling if available (not used by BLOOM which uses ALiBi)
     rope_scaling = getattr(hf_config, 'rope_scaling', None)
     
@@ -1128,6 +1630,9 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
     is_whisper = _is_whisper_model(model_name)
+    is_qwen2vl = _is_qwen2vl_model(model_name)
+    is_qwen3vl = _is_qwen3vl_model(model_name)
+    is_qwen3omni = _is_qwen3omni_model(model_name)
     
     # SSM models need snapshot_download for local path loading
     if is_ssm:
@@ -1149,11 +1654,23 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     tokenizer = None
     image_processor = None
     whisper_processor = None
+    qwen2vl_processor = None
+    qwen3vl_processor = None
+    qwen3omni_processor = None
     if is_swinv2:
         image_processor = AutoImageProcessor.from_pretrained(model_name)
     elif is_whisper:
         whisper_processor = WhisperProcessor.from_pretrained(model_name)
         tokenizer = whisper_processor.tokenizer
+    elif is_qwen3omni:
+        qwen3omni_processor = AutoProcessor.from_pretrained(model_name)
+        tokenizer = qwen3omni_processor.tokenizer
+    elif is_qwen3vl:
+        qwen3vl_processor = AutoProcessor.from_pretrained(model_name)
+        tokenizer = qwen3vl_processor.tokenizer
+    elif is_qwen2vl:
+        qwen2vl_processor = AutoProcessor.from_pretrained(model_name)
+        tokenizer = qwen2vl_processor.tokenizer
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         if tokenizer.pad_token is None:
@@ -1173,7 +1690,13 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         hf_config = AutoConfig.from_pretrained(model_name)
     
     # Get total layers (handle different naming conventions)
-    if is_swinv2:
+    if is_qwen3omni:
+        total_layers = hf_config.thinker_config.text_config.num_hidden_layers
+    elif is_qwen3vl:
+        total_layers = hf_config.text_config.num_hidden_layers
+    elif is_qwen2vl:
+        total_layers = hf_config.text_config.num_hidden_layers
+    elif is_swinv2:
         # SwinV2 uses depths list, not a single num_layers
         total_layers = sum(hf_config.depths)
     elif is_t5:
@@ -1196,7 +1719,46 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     truncated = num_layers < total_layers
     
     # --- Load HF model ---
-    if is_t5:
+    if is_qwen3omni:
+        if truncated:
+            hf_config.thinker_config.text_config.num_hidden_layers = num_layers
+            hf_config.thinker_config.vision_config.depth = min(num_layers, hf_config.thinker_config.vision_config.depth)
+            hf_config.thinker_config.audio_config.encoder_layers = min(num_layers, hf_config.thinker_config.audio_config.encoder_layers)
+        # Load only the thinker component (disable audio output to skip talker/code2wav)
+        hf_config.enable_audio_output = False
+        hf_model = Qwen3OmniMoeThinkerForConditionalGeneration.from_pretrained(
+            model_name,
+            config=hf_config.thinker_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+            attn_implementation="eager",
+        )
+        hf_model.eval()
+    elif is_qwen3vl:
+        if truncated:
+            hf_config.text_config.num_hidden_layers = num_layers
+            hf_config.vision_config.depth = min(num_layers, hf_config.vision_config.depth)
+        hf_model = Qwen3VLForConditionalGeneration.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+            attn_implementation="eager",
+        )
+        hf_model.eval()
+    elif is_qwen2vl:
+        if truncated:
+            hf_config.text_config.num_hidden_layers = num_layers
+            hf_config.vision_config.depth = min(num_layers, hf_config.vision_config.depth)
+        hf_model = Qwen2VLForConditionalGeneration.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+            attn_implementation="eager",  # Use eager attention for alignment
+        )
+        hf_model.eval()
+    elif is_t5:
         if truncated:
             hf_config.num_layers = num_layers
             hf_config.num_decoder_layers = num_layers
@@ -1287,7 +1849,20 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     # Create KB config 
     kb_config = create_kb_model_from_hf_config(hf_config)
     
-    if is_t5:
+    if is_qwen3omni:
+        kb_config['num_hidden_layers'] = num_layers
+        if truncated:
+            kb_config['vision_depth'] = min(num_layers, kb_config['vision_depth'])
+            kb_config['audio_encoder_layers'] = min(num_layers, kb_config['audio_encoder_layers'])
+    elif is_qwen3vl:
+        kb_config['num_hidden_layers'] = num_layers
+        if truncated:
+            kb_config['vision_depth'] = min(num_layers, kb_config['vision_depth'])
+    elif is_qwen2vl:
+        kb_config['num_hidden_layers'] = num_layers
+        if truncated:
+            kb_config['vision_depth'] = min(num_layers, kb_config['vision_depth'])
+    elif is_t5:
         kb_config['num_encoder_layers'] = num_layers
         kb_config['num_decoder_layers'] = num_layers
     elif is_whisper:
@@ -1314,7 +1889,24 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     copy_weights(hf_model, kb_model, num_layers, model_name=model_name)
     kb_model.eval()
     
-    if is_t5:
+    if is_qwen3omni:
+        print(f"Loaded: {num_layers}/{total_layers} LLM layers, "
+              f"vision_depth={kb_config['vision_depth']}, "
+              f"audio_layers={kb_config['audio_encoder_layers']}, "
+              f"hidden_size={kb_config['hidden_size']}, "
+              f"{kb_config['num_attention_heads']} heads, "
+              f"{kb_config['num_experts']} experts (Qwen3-Omni-MoE)")
+    elif is_qwen3vl:
+        print(f"Loaded: {num_layers}/{total_layers} LLM layers, "
+              f"vision_depth={kb_config['vision_depth']}, "
+              f"hidden_size={kb_config['hidden_size']}, "
+              f"{kb_config['num_attention_heads']} heads (Qwen3-VL)")
+    elif is_qwen2vl:
+        print(f"Loaded: {num_layers}/{total_layers} LLM layers, "
+              f"vision_depth={kb_config['vision_depth']}, "
+              f"hidden_size={kb_config['hidden_size']}, "
+              f"{kb_config['num_attention_heads']} heads (Qwen2-VL)")
+    elif is_t5:
         print(f"Loaded: {num_layers}/{total_layers} layers, d_model={kb_config['d_model']}, "
               f"{kb_config['num_heads']} heads (T5 encoder-decoder)")
     elif is_whisper:
@@ -1332,7 +1924,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
               f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
     
-    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor
+    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor
 
 
 # ============================================================================
@@ -1374,12 +1966,15 @@ def test_prefill_alignment(loaded_models):
     For T5: uses text prompts as encoder input, pad token as decoder input.
     For SwinV2: uses random pixel values for image classification.
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor), model_name, max_layers = loaded_models
     
     is_ssm = _is_ssm_model(model_name)
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
     is_whisper = _is_whisper_model(model_name)
+    is_qwen2vl = _is_qwen2vl_model(model_name)
+    is_qwen3vl = _is_qwen3vl_model(model_name)
+    is_qwen3omni = _is_qwen3omni_model(model_name)
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
@@ -1434,6 +2029,478 @@ def test_prefill_alignment(loaded_models):
             
             assert top_match, f"Top predictions differ: HF={hf_top} vs KB={kb_top}"
             assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    if is_qwen3omni:
+        # Qwen3-Omni-MoE: test with real images, audio, and text prompts
+        rtol_mean = RTOL_MEAN
+        rtol_max = RTOL_MAX
+        assert qwen3omni_processor is not None, "Qwen3-Omni processor required"
+        test_images = _load_test_images()
+        print(f"  Loaded {len(test_images)} test images")
+        
+        # Test 1: Image + text (visual questions)
+        vl_prompts = [
+            "What is shown in this image?",
+            "Describe the colors you see.",
+            "What objects can you identify?",
+            "Is there any text visible in this image?",
+            "What is the main subject of this photo?",
+        ]
+        
+        for i, ((pil_image, image_url), prompt) in enumerate(zip(test_images, vl_prompts)):
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": pil_image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            
+            text = qwen3omni_processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
+            inputs = qwen3omni_processor(
+                text=[text],
+                images=[pil_image],
+                return_tensors="pt",
+                padding=True,
+            )
+            
+            input_ids = inputs["input_ids"].to(device=DEVICE)
+            attention_mask = inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device=DEVICE)
+            pixel_values = inputs["pixel_values"].to(device=DEVICE, dtype=DTYPE)
+            image_grid_thw = inputs["image_grid_thw"].to(device=DEVICE)
+            
+            with torch.no_grad():
+                # HuggingFace forward
+                hf_out = hf_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    use_cache=False,
+                )
+                hf_logits = hf_out.logits
+                
+                # KernelBench forward
+                kb_logits = kb_model(
+                    input_ids=input_ids,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    attention_mask=attention_mask,
+                )
+            
+            # Compare last position logits
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = tokenizer.decode([hf_top])
+            kb_token = tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < rtol_mean
+            max_ok = max_rel_diff < rtol_max
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            img_w, img_h = pil_image.size
+            seq_len = input_ids.shape[1]
+            print(f"\n  [img-{i}] {status}: image ({img_w}x{img_h}), seq_len={seq_len}")
+            print(f"      Prompt: '{prompt[:60]}'")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={rtol_max}), mean={mean_rel_diff:.2e} (limit={rtol_mean})")
+            print(f"      HF next: '{hf_token}' (id={hf_top}) | KB next: '{kb_token}' (id={kb_top}) (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {rtol_mean}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {rtol_max}"
+        
+        # Test 2: Audio + text (audio questions)
+        import io
+        import soundfile as sf
+        import librosa
+        from datasets import load_dataset, Audio as DatasetsAudio
+        ds = load_dataset(
+            "hf-internal-testing/librispeech_asr_dummy", "clean",
+            split="validation",
+        )
+        ds = ds.cast_column("audio", DatasetsAudio(decode=False))
+        
+        target_sr = qwen3omni_processor.feature_extractor.sampling_rate
+        test_audio_indices = [0, 1, 2]
+        for idx, sample_idx in enumerate(test_audio_indices):
+            sample = ds[sample_idx]
+            audio_bytes = sample["audio"]["bytes"]
+            audio_array, sampling_rate = sf.read(io.BytesIO(audio_bytes))
+            # Resample to target sampling rate if needed
+            if sampling_rate != target_sr:
+                audio_array = librosa.resample(audio_array, orig_sr=sampling_rate, target_sr=target_sr)
+                sampling_rate = target_sr
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio", "audio": "dummy_placeholder"},
+                        {"type": "text", "text": "What is being said in this audio?"},
+                    ],
+                }
+            ]
+            
+            text = qwen3omni_processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
+            inputs = qwen3omni_processor(
+                text=[text],
+                audio=[audio_array],
+                return_tensors="pt",
+                padding=True,
+            )
+            
+            input_ids = inputs["input_ids"].to(device=DEVICE)
+            attention_mask = inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device=DEVICE)
+            input_features = inputs.get("input_features", None)
+            if input_features is not None:
+                input_features = input_features.to(device=DEVICE, dtype=DTYPE)
+            feature_attention_mask = inputs.get("feature_attention_mask", None)
+            if feature_attention_mask is not None:
+                feature_attention_mask = feature_attention_mask.to(device=DEVICE)
+            
+            with torch.no_grad():
+                # HuggingFace forward
+                hf_out = hf_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    input_features=input_features,
+                    feature_attention_mask=feature_attention_mask,
+                    use_cache=False,
+                )
+                hf_logits = hf_out.logits
+                
+                # KernelBench forward
+                kb_logits = kb_model(
+                    input_ids=input_ids,
+                    input_features=input_features,
+                    feature_attention_mask=feature_attention_mask,
+                    attention_mask=attention_mask,
+                )
+            
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = tokenizer.decode([hf_top])
+            kb_token = tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < rtol_mean
+            max_ok = max_rel_diff < rtol_max
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            duration_s = len(audio_array) / sampling_rate
+            transcript_preview = sample.get("text", "N/A")[:40]
+            print(f"\n  [audio-{idx}] {status}: sample {sample_idx} ({duration_s:.1f}s, '{transcript_preview}...')")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={rtol_max}), mean={mean_rel_diff:.2e} (limit={rtol_mean})")
+            print(f"      HF next: '{hf_token}' (id={hf_top}) | KB next: '{kb_token}' (id={kb_top}) (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {rtol_mean}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {rtol_max}"
+        
+        # Test 3: Text-only
+        text_prompts = ["What is the capital of France?", "Explain quantum computing briefly."]
+        for idx, prompt in enumerate(text_prompts):
+            messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+            text = qwen3omni_processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
+            inputs = qwen3omni_processor(text=[text], return_tensors="pt", padding=True)
+            
+            input_ids = inputs["input_ids"].to(device=DEVICE)
+            attention_mask = inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device=DEVICE)
+            
+            with torch.no_grad():
+                hf_out = hf_model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+                hf_logits = hf_out.logits
+                kb_logits = kb_model(input_ids=input_ids, attention_mask=attention_mask)
+            
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = tokenizer.decode([hf_top])
+            kb_token = tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < rtol_mean
+            max_ok = max_rel_diff < rtol_max
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            seq_len = input_ids.shape[1]
+            print(f"\n  [text-{idx}] {status}: seq_len={seq_len}")
+            print(f"      Prompt: '{prompt[:60]}'")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={rtol_max}), mean={mean_rel_diff:.2e} (limit={rtol_mean})")
+            print(f"      HF next: '{hf_token}' (id={hf_top}) | KB next: '{kb_token}' (id={kb_top}) (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {rtol_mean}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {rtol_max}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    if is_qwen3vl:
+        # Qwen3-VL: test with real images and text prompts
+        assert qwen3vl_processor is not None, "Qwen3-VL processor required"
+        test_images = _load_test_images()
+        print(f"  Loaded {len(test_images)} test images")
+        
+        vl_prompts = [
+            "Describe what you see in this image.",
+            "What objects are present in this image?",
+            "What is happening in this image? Answer briefly.",
+            "How many living beings can you see?",
+            "What colors are dominant in this image?",
+        ]
+        
+        for i, ((pil_image, image_url), prompt) in enumerate(zip(test_images, vl_prompts)):
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": pil_image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            
+            text = qwen3vl_processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
+            inputs = qwen3vl_processor(
+                text=[text],
+                images=[pil_image],
+                return_tensors="pt",
+                padding=True,
+            )
+            
+            input_ids = inputs["input_ids"].to(device=DEVICE)
+            attention_mask = inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device=DEVICE)
+            pixel_values = inputs["pixel_values"].to(device=DEVICE, dtype=DTYPE)
+            image_grid_thw = inputs["image_grid_thw"].to(device=DEVICE)
+            
+            with torch.no_grad():
+                # HuggingFace forward
+                hf_out = hf_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    use_cache=False,
+                )
+                hf_logits = hf_out.logits
+                
+                # KernelBench forward
+                kb_logits = kb_model(
+                    input_ids=input_ids,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    attention_mask=attention_mask,
+                )
+            
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = tokenizer.decode([hf_top])
+            kb_token = tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < RTOL_MEAN
+            max_ok = max_rel_diff < RTOL_MAX
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            img_w, img_h = pil_image.size
+            seq_len = input_ids.shape[1]
+            print(f"\n  [{i}] {status}: image ({img_w}x{img_h}), seq_len={seq_len}")
+            print(f"      Prompt: '{prompt[:60]}'")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={RTOL_MAX}), mean={mean_rel_diff:.2e} (limit={RTOL_MEAN})")
+            print(f"      HF next: '{hf_token}' (id={hf_top}) | KB next: '{kb_token}' (id={kb_top}) (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {RTOL_MAX}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    if is_qwen2vl:
+        # Qwen2-VL: test with real images and text prompts
+        assert qwen2vl_processor is not None, "Qwen2-VL processor required"
+        test_images = _load_test_images()
+        print(f"  Loaded {len(test_images)} test images")
+        
+        # Test prompts for vision-language
+        vl_prompts = [
+            "Describe what you see in this image.",
+            "What objects are present in this image?",
+            "What is happening in this image? Answer briefly.",
+            "How many living beings can you see?",
+            "What colors are dominant in this image?",
+        ]
+        
+        for i, ((pil_image, image_url), prompt) in enumerate(zip(test_images, vl_prompts)):
+            # Build conversation format for Qwen2-VL
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": pil_image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            
+            # Process with the official Qwen2-VL processor
+            text = qwen2vl_processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
+            inputs = qwen2vl_processor(
+                text=[text],
+                images=[pil_image],
+                return_tensors="pt",
+                padding=True,
+            )
+            
+            input_ids = inputs["input_ids"].to(device=DEVICE)
+            attention_mask = inputs.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device=DEVICE)
+            pixel_values = inputs["pixel_values"].to(device=DEVICE, dtype=DTYPE)
+            image_grid_thw = inputs["image_grid_thw"].to(device=DEVICE)
+            
+            with torch.no_grad():
+                # HuggingFace forward
+                hf_out = hf_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    use_cache=False,
+                )
+                hf_logits = hf_out.logits  # (batch, seq_len, vocab)
+                
+                # KernelBench forward
+                kb_logits = kb_model(
+                    input_ids=input_ids,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    attention_mask=attention_mask,
+                )  # (batch, seq_len, vocab)
+            
+            # Compare last position logits
+            hf_last = hf_logits[:, -1, :].float()
+            kb_last = kb_logits[:, -1, :].float()
+            
+            abs_diff = (hf_last - kb_last).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_last.abs(), kb_last.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_last.argmax(dim=-1).item()
+            kb_top = kb_last.argmax(dim=-1).item()
+            
+            hf_token = tokenizer.decode([hf_top])
+            kb_token = tokenizer.decode([kb_top])
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < RTOL_MEAN
+            max_ok = max_rel_diff < RTOL_MAX
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            img_w, img_h = pil_image.size
+            seq_len = input_ids.shape[1]
+            print(f"\n  [{i}] {status}: image ({img_w}x{img_h}), seq_len={seq_len}")
+            print(f"      Prompt: '{prompt[:60]}'")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e} (limit={RTOL_MAX}), mean={mean_rel_diff:.2e} (limit={RTOL_MEAN})")
+            print(f"      HF next: '{hf_token}' (id={hf_top}) | KB next: '{kb_token}' (id={kb_top}) (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_token} vs KB={kb_token}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+            assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {RTOL_MAX}"
         
         print("\n" + "-"*70)
         print(f"All prefill tests passed for {model_name}!")
@@ -1689,7 +2756,7 @@ def test_generation(loaded_models):
     Validates that both implementations produce matching token sequences.
     Skipped for SwinV2 (image classification, no generation).
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor), model_name, max_layers = loaded_models
     
     # Skip generation test for vision models
     if _is_swinv2_model(model_name):
@@ -1706,12 +2773,214 @@ def test_generation(loaded_models):
     is_mamba2 = _is_mamba2_model(model_name)
     is_mamba1 = _is_mamba1_model(model_name)
     is_ssm = is_mamba2 or is_mamba1
+    is_qwen2vl = _is_qwen2vl_model(model_name)
+    is_qwen3vl = _is_qwen3vl_model(model_name)
+    is_qwen3omni = _is_qwen3omni_model(model_name)
+    is_multimodal_vl = is_qwen2vl or is_qwen3vl or is_qwen3omni
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
-    print(f"Testing Continuous Batching Generation for {model_name}{layers_info}")
+    print(f"Testing Generation for {model_name}{layers_info}")
     print("="*70)
     
+    # ---- Multimodal generation tests (Qwen2-VL, Qwen3-VL, Qwen3-Omni) ----
+    if is_multimodal_vl:
+        results = []
+        num_tokens = 20  # Generate 20 tokens for each multimodal test
+        
+        # Determine which processor to use
+        if is_qwen2vl:
+            processor = qwen2vl_processor
+        elif is_qwen3vl:
+            processor = qwen3vl_processor
+        elif is_qwen3omni:
+            processor = qwen3omni_processor
+        assert processor is not None, f"Processor required for {model_name}"
+        
+        # --- Test 1: Image + text ---
+        test_images = _load_test_images()
+        vl_prompts = [
+            "What is shown in this image?",
+            "Describe the colors you see.",
+        ]
+        for img_idx, ((pil_image, image_url), prompt) in enumerate(zip(test_images[:2], vl_prompts)):
+            print(f"\n  [img-gen-{img_idx}] Image + text generation ({num_tokens} tokens)")
+            print(f"      Prompt: '{prompt}'")
+            
+            messages = [{"role": "user", "content": [
+                {"type": "image", "image": pil_image},
+                {"type": "text", "text": prompt},
+            ]}]
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(text=[text], images=[pil_image], return_tensors="pt", padding=True)
+            inputs = {k: v.to(DEVICE) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+            
+            input_ids = inputs['input_ids']
+            prompt_len = input_ids.shape[1]
+            
+            with torch.no_grad():
+                # HF generation using model.generate() (handles M-RoPE position IDs correctly)
+                hf_full_seq = hf_model.generate(**inputs, max_new_tokens=num_tokens, do_sample=False)
+                hf_tokens = hf_full_seq[:, prompt_len:]
+                
+                # KB generation
+                kb_kwargs = {
+                    'input_ids': input_ids,
+                    'max_new_tokens': num_tokens,
+                }
+                if 'pixel_values' in inputs:
+                    kb_kwargs['pixel_values'] = inputs['pixel_values']
+                if 'image_grid_thw' in inputs:
+                    kb_kwargs['image_grid_thw'] = inputs['image_grid_thw']
+                if 'attention_mask' in inputs:
+                    kb_kwargs['attention_mask'] = inputs['attention_mask']
+                
+                kb_full_seq = kb_model.generate(**kb_kwargs)
+                kb_tokens = kb_full_seq[:, prompt_len:]
+            
+            hf_text = tokenizer.decode(hf_tokens[0], skip_special_tokens=True)
+            kb_text = tokenizer.decode(kb_tokens[0], skip_special_tokens=True)
+            
+            consecutive_matches, comparable_len = _count_consecutive_matches(hf_tokens[0], kb_tokens[0])
+            full_match = consecutive_matches == comparable_len and comparable_len == num_tokens
+            
+            print(f"      Consecutive matches: {consecutive_matches}/{comparable_len} ({100*consecutive_matches/max(comparable_len,1):.1f}%)")
+            print(f"      HF: '{hf_text[:80]}...'")
+            print(f"      KB: '{kb_text[:80]}...'")
+            
+            results.append({'full_match': full_match, 'consecutive_matches': consecutive_matches, 'total_tokens': comparable_len})
+        
+        # --- Test 2: Text-only ---
+        text_prompts = [
+            "What is the capital of France?",
+            "Explain quantum computing briefly.",
+        ]
+        for txt_idx, prompt in enumerate(text_prompts):
+            print(f"\n  [text-gen-{txt_idx}] Text-only generation ({num_tokens} tokens)")
+            print(f"      Prompt: '{prompt}'")
+            
+            messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            if is_qwen3omni:
+                inputs = processor(text=[text], return_tensors="pt", padding=True)
+            else:
+                inputs = processor(text=[text], return_tensors="pt", padding=True)
+            inputs = {k: v.to(DEVICE) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+            
+            input_ids = inputs['input_ids']
+            prompt_len = input_ids.shape[1]
+            
+            with torch.no_grad():
+                # HF generation using model.generate()
+                hf_full_seq = hf_model.generate(input_ids=input_ids, max_new_tokens=num_tokens, do_sample=False)
+                hf_tokens = hf_full_seq[:, prompt_len:]
+                
+                kb_full_seq = kb_model.generate(
+                    input_ids=input_ids,
+                    max_new_tokens=num_tokens,
+                    attention_mask=inputs.get('attention_mask'),
+                )
+                kb_tokens = kb_full_seq[:, prompt_len:]
+            
+            hf_text = tokenizer.decode(hf_tokens[0], skip_special_tokens=True)
+            kb_text = tokenizer.decode(kb_tokens[0], skip_special_tokens=True)
+            
+            consecutive_matches, comparable_len = _count_consecutive_matches(hf_tokens[0], kb_tokens[0])
+            full_match = consecutive_matches == comparable_len and comparable_len == num_tokens
+            
+            print(f"      Consecutive matches: {consecutive_matches}/{comparable_len} ({100*consecutive_matches/max(comparable_len,1):.1f}%)")
+            print(f"      HF: '{hf_text[:80]}...'")
+            print(f"      KB: '{kb_text[:80]}...'")
+            
+            results.append({'full_match': full_match, 'consecutive_matches': consecutive_matches, 'total_tokens': comparable_len})
+        
+        # --- Test 3: Audio + text (Qwen3-Omni only) ---
+        if is_qwen3omni:
+            import librosa
+            import numpy as np
+            import io
+            import soundfile as sf
+            from datasets import load_dataset, Audio as DatasetsAudio
+            ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+            # Disable automatic audio decoding to avoid torchcodec/FFmpeg dependency
+            ds = ds.cast_column("audio", DatasetsAudio(decode=False))
+            target_sr = processor.feature_extractor.sampling_rate
+            
+            audio_prompts = ["Transcribe this audio.", "What is being said?"]
+            for aud_idx in range(min(2, len(ds))):
+                # Load audio using soundfile to avoid torchcodec dependency
+                sample = ds[aud_idx]
+                audio_bytes = sample["audio"]["bytes"]
+                audio_array, sr = sf.read(io.BytesIO(audio_bytes))
+                if audio_array.ndim > 1:
+                    audio_array = audio_array.mean(axis=1)
+                audio_array = audio_array.astype(np.float32)
+                if sr != target_sr:
+                    audio_array = librosa.resample(audio_array, orig_sr=sr, target_sr=target_sr)
+                
+                prompt = audio_prompts[aud_idx]
+                print(f"\n  [audio-gen-{aud_idx}] Audio + text generation ({num_tokens} tokens)")
+                print(f"      Prompt: '{prompt}'")
+                
+                messages = [{"role": "user", "content": [
+                    {"type": "audio", "audio": "dummy_placeholder"},
+                    {"type": "text", "text": prompt},
+                ]}]
+                text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                inputs = processor(text=[text], audio=[audio_array], return_tensors="pt", padding=True)
+                inputs = {k: (v.to(device=DEVICE, dtype=DTYPE) if v.is_floating_point() else v.to(DEVICE)) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+                
+                input_ids = inputs['input_ids']
+                prompt_len = input_ids.shape[1]
+                
+                with torch.no_grad():
+                    # HF generation using model.generate()
+                    hf_full_seq = hf_model.generate(**inputs, max_new_tokens=num_tokens, do_sample=False)
+                    hf_tokens = hf_full_seq[:, prompt_len:]
+                    
+                    kb_kwargs = {
+                        'input_ids': input_ids,
+                        'max_new_tokens': num_tokens,
+                    }
+                    if 'input_features' in inputs:
+                        kb_kwargs['input_features'] = inputs['input_features']
+                    if 'feature_attention_mask' in inputs:
+                        kb_kwargs['feature_attention_mask'] = inputs['feature_attention_mask']
+                    if 'attention_mask' in inputs:
+                        kb_kwargs['attention_mask'] = inputs['attention_mask']
+                    
+                    kb_full_seq = kb_model.generate(**kb_kwargs)
+                    kb_tokens = kb_full_seq[:, prompt_len:]
+                
+                hf_text = tokenizer.decode(hf_tokens[0], skip_special_tokens=True)
+                kb_text = tokenizer.decode(kb_tokens[0], skip_special_tokens=True)
+                
+                consecutive_matches, comparable_len = _count_consecutive_matches(hf_tokens[0], kb_tokens[0])
+                full_match = consecutive_matches == comparable_len and comparable_len == num_tokens
+                
+                print(f"      Consecutive matches: {consecutive_matches}/{comparable_len} ({100*consecutive_matches/max(comparable_len,1):.1f}%)")
+                print(f"      HF: '{hf_text[:80]}...'")
+                print(f"      KB: '{kb_text[:80]}...'")
+                
+                results.append({'full_match': full_match, 'consecutive_matches': consecutive_matches, 'total_tokens': comparable_len})
+        
+        # Summary for multimodal generation
+        print("\n" + "="*70)
+        print("Generation Summary")
+        print("="*70)
+        
+        total_consecutive = sum(r['consecutive_matches'] for r in results)
+        total_tokens = sum(r['total_tokens'] for r in results)
+        full_matches = sum(r['full_match'] for r in results)
+        
+        print(f"Full sequence matches: {full_matches}/{len(results)}")
+        print(f"Consecutive token accuracy: {total_consecutive}/{total_tokens} ({100*total_consecutive/total_tokens:.1f}%)")
+        
+        assert total_consecutive / total_tokens >= GENERATION_CONSECUTIVE_THRESHOLD, \
+            f"Consecutive token accuracy {100*total_consecutive/total_tokens:.1f}% below {100*GENERATION_CONSECUTIVE_THRESHOLD:.0f}% threshold"
+        return
+    
+    # ---- Standard text-only generation tests ----
     results = []
     
     for i, (prompt, num_tokens) in enumerate(zip(TEST_PROMPTS, RESPONSE_LENGTHS)):
@@ -1806,18 +3075,7 @@ def test_generation(loaded_models):
         kb_text = tokenizer.decode(kb_tokens[0], skip_special_tokens=True)
         
         # Count CONSECUTIVE matching tokens from the start
-        # After the first mismatch, everything after is considered garbage
-        matches = (hf_tokens[0] == kb_tokens[0])
-        if matches.all():
-            consecutive_matches = num_tokens
-        else:
-            # Find index of first mismatch
-            first_mismatch_indices = (~matches).nonzero(as_tuple=True)[0]
-            if len(first_mismatch_indices) > 0:
-                consecutive_matches = first_mismatch_indices[0].item()
-            else:
-                consecutive_matches = num_tokens
-        
+        consecutive_matches, comparable_len = _count_consecutive_matches(hf_tokens[0], kb_tokens[0])
         full_match = consecutive_matches == num_tokens
         
         print(f"    Consecutive matches: {consecutive_matches}/{num_tokens} ({100*consecutive_matches/num_tokens:.1f}%)")
@@ -1948,11 +3206,23 @@ def test_components(loaded_models):
     Validates that individual model components (embeddings, layer norms, MLP, LM head)
     produce matching outputs between HuggingFace and KernelBench implementations.
     """
-    (hf_model, kb_model, tokenizer, kb_config, _, image_processor, whisper_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, _, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor), model_name, max_layers = loaded_models
     
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
     is_whisper = _is_whisper_model(model_name)
+    is_qwen2vl = _is_qwen2vl_model(model_name)
+    is_qwen3vl = _is_qwen3vl_model(model_name)
+    is_qwen3omni = _is_qwen3omni_model(model_name)
+    
+    if is_qwen3omni:
+        pytest.skip("Qwen3-Omni component tests not yet implemented (use test_prefill_alignment)")
+    
+    if is_qwen3vl:
+        pytest.skip("Qwen3-VL component tests not yet implemented (use test_prefill_alignment)")
+    
+    if is_qwen2vl:
+        pytest.skip("Qwen2-VL component tests not yet implemented (use test_prefill_alignment)")
     
     if is_whisper:
         pytest.skip("Whisper component tests not yet implemented (use test_prefill_alignment)")
