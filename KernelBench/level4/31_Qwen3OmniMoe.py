@@ -64,13 +64,21 @@ Tested against: Qwen/Qwen3-Omni-30B-A3B-Instruct
 
 This model uses level1 operators from KernelBench:
 - Linear from level1/matmul/_10_Linear
+- LayerNorm from level1/normalization/_6_LayerNorm
+- RMSNorm from level1/normalization/_4_RMSNorm
 - Embedding from level1/embeddings/_2_Embedding
+- PatchEmbed3D from level1/vision/_2_PatchEmbed3D
+- GELU from level1/activations/_8_GELU
+- Swish (SiLU) from level1/activations/_7_Swish
 - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
 - MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
 - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
-- GELU from level1/activations/_8_GELU
-- Swish (SiLU) from level1/activations/_7_Swish
-- MatMul from level1/matmul/_1_MatMul
+- ScaledDotProductAttention(mode="eager") from level1/attention/_2_Attention
+
+Note: Using level1 wrappers changes the state-dict key names (e.g.
+LayerNorm adds ".ln.", Embedding adds ".embedding."). The weight-copying
+logic in test_hf_alignment.py unwraps these prefixes when mapping KB keys
+to HF keys.
 """
 
 import torch
@@ -82,13 +90,16 @@ from typing import Optional, Dict, List, Tuple
 
 # Import level1 operators
 from ..level1.matmul._10_Linear import Model as Linear
+from ..level1.normalization._6_LayerNorm import Model as LayerNorm
+from ..level1.normalization._4_RMSNorm import Model as RMSNorm
 from ..level1.embeddings._2_Embedding import Model as Embedding
+from ..level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.activations._7_Swish import Model as Swish
-from ..level1.matmul._1_MatMul import Model as MatMul
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
 from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEmbedding
+from ..level1.attention._2_Attention import ScaledDotProductAttention
 
 
 # ============================================================================
@@ -98,27 +109,6 @@ from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEm
 VARIANTS: Dict[str, str] = {
     "30B-A3B": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
 }
-
-
-# ============================================================================
-# RMSNorm (for the language model decoder)
-# ============================================================================
-
-class RMSNorm(nn.Module):
-    """RMSNorm matching HuggingFace Qwen3OmniMoeThinkerTextRMSNorm exactly."""
-    def __init__(self, hidden_size: int, eps: float = 1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
-
-
 
 
 # ============================================================================
@@ -148,20 +138,26 @@ class SinusoidsPositionEmbedding(nn.Module):
 
 
 class AudioAttention(nn.Module):
-    """Multi-headed attention for audio encoder."""
+    """Multi-headed attention for audio encoder.
+
+    Uses level1 operators:
+    - Linear for Q/K/V/O projections
+    - ScaledDotProductAttention(mode="eager") for attention math
+      (matches HuggingFace eager attention numerically)
+    """
     def __init__(self, embed_dim: int, num_heads: int, attention_dropout: float = 0.0):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
-        self.num_key_value_groups = 1
         self.scaling = self.head_dim ** -0.5
-        self.attention_dropout = attention_dropout
 
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=True)
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=True)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=True)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=True)
+        self.q_proj = Linear(embed_dim, embed_dim, bias=True)
+        self.k_proj = Linear(embed_dim, embed_dim, bias=True)
+        self.v_proj = Linear(embed_dim, embed_dim, bias=True)
+        self.out_proj = Linear(embed_dim, embed_dim, bias=True)
+        # Level1 ScaledDotProductAttention with eager mode for HF-aligned attention
+        self.sdpa = ScaledDotProductAttention(mode="eager")
 
     def forward(
         self,
@@ -180,16 +176,12 @@ class AudioAttention(nn.Module):
         key_states = key_states.transpose(0, 1).unsqueeze(0)
         value_states = value_states.transpose(0, 1).unsqueeze(0)
 
-        # Eager attention (no mask needed - HF's eager audio attention is unmasked;
-        # cu_seqlens are only used for Flash Attention's varlen path)
-        key_states_rep = key_states
-        value_states_rep = value_states
-        attn_weights = torch.matmul(query_states, key_states_rep.transpose(2, 3)) * self.scaling
+        # Level1 ScaledDotProductAttention (eager mode) for HF-aligned attention
+        attn_mask = None
         if attention_mask is not None:
-            causal_mask = attention_mask[:, :, :, :key_states_rep.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states_rep)
+            attn_mask = attention_mask[:, :, :, :key_states.shape[-2]]
+        attn_output = self.sdpa(query_states, key_states, value_states,
+                                attn_mask=attn_mask, scale=self.scaling)
         attn_output = attn_output.transpose(1, 2).contiguous()
 
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
@@ -198,17 +190,18 @@ class AudioAttention(nn.Module):
 
 
 class AudioEncoderLayer(nn.Module):
-    """Single audio encoder transformer layer."""
+    """Single audio encoder transformer layer.
+    Uses level1 LayerNorm, Linear, and GELU operators."""
     def __init__(self, d_model: int, num_heads: int, ffn_dim: int,
                  activation_function: str = "gelu", attention_dropout: float = 0.0):
         super().__init__()
         self.embed_dim = d_model
         self.self_attn = AudioAttention(d_model, num_heads, attention_dropout)
-        self.self_attn_layer_norm = nn.LayerNorm(d_model)
-        self.activation_fn = nn.GELU() if activation_function == "gelu" else nn.GELU()
-        self.fc1 = nn.Linear(d_model, ffn_dim)
-        self.fc2 = nn.Linear(ffn_dim, d_model)
-        self.final_layer_norm = nn.LayerNorm(d_model)
+        self.self_attn_layer_norm = LayerNorm(d_model)
+        self.activation_fn = GELU()
+        self.fc1 = Linear(d_model, ffn_dim, bias=True)
+        self.fc2 = Linear(ffn_dim, d_model, bias=True)
+        self.final_layer_norm = LayerNorm(d_model)
 
     def forward(
         self,
@@ -279,22 +272,22 @@ class AudioEncoder(nn.Module):
                               activation_function, attention_dropout)
             for _ in range(encoder_layers)
         ])
-        self.ln_post = nn.LayerNorm(d_model)
+        self.ln_post = LayerNorm(d_model)
 
         # Conv2d downsampling
         self.conv2d1 = nn.Conv2d(1, downsample_hidden_size, 3, 2, padding=1)
         self.conv2d2 = nn.Conv2d(downsample_hidden_size, downsample_hidden_size, 3, 2, padding=1)
         self.conv2d3 = nn.Conv2d(downsample_hidden_size, downsample_hidden_size, 3, 2, padding=1)
-        self.conv_out = nn.Linear(
+        self.conv_out = Linear(
             downsample_hidden_size * ((((num_mel_bins + 1) // 2 + 1) // 2 + 1) // 2),
             d_model,
             bias=False,
         )
 
         # Projection MLP
-        self.proj1 = nn.Linear(d_model, d_model)
-        self.act = nn.GELU() if activation_function == "gelu" else nn.GELU()
-        self.proj2 = nn.Linear(d_model, output_dim)
+        self.proj1 = Linear(d_model, d_model, bias=True)
+        self.act = GELU()
+        self.proj2 = Linear(d_model, output_dim, bias=True)
 
     def forward(
         self,
@@ -374,43 +367,17 @@ class AudioEncoder(nn.Module):
 # Vision Encoder Components
 # ============================================================================
 
-class PatchEmbed(nn.Module):
-    """3D patch embedding using Conv3d (temporal + spatial) with bias."""
-    def __init__(
-        self,
-        patch_size: int = 16,
-        temporal_patch_size: int = 2,
-        in_channels: int = 3,
-        embed_dim: int = 1152,
-    ):
-        super().__init__()
-        self.patch_size = patch_size
-        self.temporal_patch_size = temporal_patch_size
-        self.in_channels = in_channels
-        self.embed_dim = embed_dim
-        kernel_size = [temporal_patch_size, patch_size, patch_size]
-        self.proj = nn.Conv3d(in_channels, embed_dim, kernel_size=kernel_size,
-                              stride=kernel_size, bias=True)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        target_dtype = self.proj.weight.dtype
-        hidden_states = hidden_states.view(
-            -1, self.in_channels, self.temporal_patch_size, self.patch_size, self.patch_size
-        )
-        hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(-1, self.embed_dim)
-        return hidden_states
-
-
 class VisionMLP(nn.Module):
-    """Vision encoder MLP with configurable activation."""
+    """Vision encoder MLP with configurable activation.
+    Uses level1 Linear and GELU operators."""
     def __init__(self, hidden_size: int, intermediate_size: int, hidden_act: str = "gelu_pytorch_tanh"):
         super().__init__()
-        self.linear_fc1 = nn.Linear(hidden_size, intermediate_size, bias=True)
-        self.linear_fc2 = nn.Linear(intermediate_size, hidden_size, bias=True)
+        self.linear_fc1 = Linear(hidden_size, intermediate_size, bias=True)
+        self.linear_fc2 = Linear(intermediate_size, hidden_size, bias=True)
         if hidden_act == "gelu_pytorch_tanh":
-            self.act_fn = nn.GELU(approximate="tanh")
+            self.act_fn = GELU(approximate="tanh")
         else:
-            self.act_fn = nn.GELU()
+            self.act_fn = GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.linear_fc2(self.act_fn(self.linear_fc1(x)))
@@ -418,17 +385,25 @@ class VisionMLP(nn.Module):
 
 class VisionAttention(nn.Module):
     """Vision encoder attention with rotary position embedding.
-    Uses level1 RotaryEmbedding for the rotate_half operation."""
+
+    Uses level1 operators:
+    - Linear for QKV and output projections
+    - RotaryEmbedding for the core rotate_half operation
+    - ScaledDotProductAttention(mode="eager") for attention math
+      (matches HuggingFace eager attention numerically)
+    """
     def __init__(self, dim: int, num_heads: int):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.qkv = nn.Linear(dim, dim * 3, bias=True)
-        self.proj = nn.Linear(dim, dim)
+        self.qkv = Linear(dim, dim * 3, bias=True)
+        self.proj = Linear(dim, dim, bias=True)
         self.scaling = self.head_dim ** -0.5
         # Level1 RotaryEmbedding for the core rotate_half operation
         self.rotary = RotaryEmbedding(self.head_dim, max_seq_len=1, base=10000.0)
+        # Level1 ScaledDotProductAttention with eager mode for HF-aligned attention
+        self.sdpa = ScaledDotProductAttention(mode="eager")
 
     def forward(
         self,
@@ -467,9 +442,8 @@ class VisionAttention(nn.Module):
 
         attn_outputs = []
         for q, k, v in zip(*splits):
-            attn_weights = torch.matmul(q, k.transpose(2, 3)) * self.scaling
-            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-            attn_out = torch.matmul(attn_weights, v)
+            # Level1 ScaledDotProductAttention (eager mode) for HF-aligned attention
+            attn_out = self.sdpa(q, k, v, scale=self.scaling)
             attn_out = attn_out.transpose(1, 2).contiguous()
             attn_outputs.append(attn_out)
 
@@ -480,12 +454,12 @@ class VisionAttention(nn.Module):
 
 
 class VisionBlock(nn.Module):
-    """Vision transformer block."""
+    """Vision transformer block. Uses level1 LayerNorm operator."""
     def __init__(self, hidden_size: int, num_heads: int, intermediate_size: int,
                  hidden_act: str = "gelu_pytorch_tanh"):
         super().__init__()
-        self.norm1 = nn.LayerNorm(hidden_size, eps=1e-6)
-        self.norm2 = nn.LayerNorm(hidden_size, eps=1e-6)
+        self.norm1 = LayerNorm(hidden_size, eps=1e-6)
+        self.norm2 = LayerNorm(hidden_size, eps=1e-6)
         self.attn = VisionAttention(hidden_size, num_heads)
         self.mlp = VisionMLP(hidden_size, intermediate_size, hidden_act)
 
@@ -505,19 +479,20 @@ class VisionBlock(nn.Module):
 
 
 class VisionPatchMerger(nn.Module):
-    """Merge spatial patches. Uses mlp as ModuleList [Linear, GELU, Linear]."""
+    """Merge spatial patches. Uses mlp as ModuleList [Linear, GELU, Linear].
+    Uses level1 LayerNorm, Linear, and GELU operators."""
     def __init__(self, hidden_size: int, out_hidden_size: int,
                  spatial_merge_size: int = 2, use_postshuffle_norm: bool = False):
         super().__init__()
         self.hidden_size_merged = hidden_size * (spatial_merge_size ** 2)
         self.use_postshuffle_norm = use_postshuffle_norm
-        self.ln_q = nn.LayerNorm(
+        self.ln_q = LayerNorm(
             self.hidden_size_merged if use_postshuffle_norm else hidden_size, eps=1e-6
         )
         self.mlp = nn.ModuleList([
-            nn.Linear(self.hidden_size_merged, self.hidden_size_merged),
-            nn.GELU(),
-            nn.Linear(self.hidden_size_merged, out_hidden_size),
+            Linear(self.hidden_size_merged, self.hidden_size_merged, bias=True),
+            GELU(),
+            Linear(self.hidden_size_merged, out_hidden_size, bias=True),
         ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -555,11 +530,12 @@ class VisionEncoder(nn.Module):
         self.spatial_merge_unit = spatial_merge_size * spatial_merge_size
         self.deepstack_visual_indexes = deepstack_visual_indexes
 
-        self.patch_embed = PatchEmbed(
+        self.patch_embed = PatchEmbed3D(
             patch_size=patch_size,
             temporal_patch_size=temporal_patch_size,
             in_channels=in_channels,
             embed_dim=hidden_size,
+            bias=True,
         )
 
         self.pos_embed = nn.Embedding(num_position_embeddings, hidden_size)
@@ -689,19 +665,16 @@ class VisionEncoder(nn.Module):
 # Language Model (MoE Decoder) Components
 # ============================================================================
 
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """Repeat KV heads for GQA."""
-    batch, num_kv_heads, slen, head_dim = hidden_states.shape
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(
-        batch, num_kv_heads, n_rep, slen, head_dim
-    )
-    return hidden_states.reshape(batch, num_kv_heads * n_rep, slen, head_dim)
-
-
 class ThinkerTextAttention(nn.Module):
-    """Multi-headed attention with GQA, QK-norm, and interleaved M-RoPE, with optional KV cache."""
+    """Multi-headed attention with GQA, QK-norm, and interleaved M-RoPE, with optional KV cache.
+
+    Uses level1 operators:
+    - Linear for Q/K/V/O projections
+    - RMSNorm for QK normalization
+    - RotaryEmbedding for the core rotate_half operation
+    - ScaledDotProductAttention(mode="eager") for attention math
+      (handles GQA and matches HuggingFace eager attention numerically)
+    """
     def __init__(
         self,
         hidden_size: int,
@@ -715,19 +688,20 @@ class ThinkerTextAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.num_kv_heads = num_kv_heads
-        self.num_key_value_groups = num_heads // num_kv_heads
         self.scaling = head_dim ** -0.5
 
-        self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
-        self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
-        self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
-        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
+        self.q_proj = Linear(hidden_size, num_heads * head_dim, bias=False)
+        self.k_proj = Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+        self.v_proj = Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+        self.o_proj = Linear(num_heads * head_dim, hidden_size, bias=False)
 
-        # QK normalization
-        self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps)
-        self.k_norm = RMSNorm(head_dim, eps=rms_norm_eps)
+        # QK normalization - level1 RMSNorm
+        self.q_norm = RMSNorm(head_dim, eps=rms_norm_eps, learnable_weight=True, dim=-1)
+        self.k_norm = RMSNorm(head_dim, eps=rms_norm_eps, learnable_weight=True, dim=-1)
         # Level1 RotaryEmbedding for the core rotate_half operation
         self.rotary = RotaryEmbedding(head_dim, max_seq_len=1, base=10000.0)
+        # Level1 ScaledDotProductAttention with eager mode for HF-aligned attention
+        self.sdpa = ScaledDotProductAttention(mode="eager")
 
         # KV cache (populated during generation)
         self._cached_k: Optional[torch.Tensor] = None
@@ -772,29 +746,30 @@ class ThinkerTextAttention(nn.Module):
             self._cached_k = key_states
             self._cached_v = value_states
 
-        key_states = repeat_kv(key_states, self.num_key_value_groups)
-        value_states = repeat_kv(value_states, self.num_key_value_groups)
-
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
+        # Level1 ScaledDotProductAttention (eager mode) handles GQA + attention math
+        attn_mask = None
         if attention_mask is not None:
-            causal_mask = attention_mask[:, :, :, :key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
+            attn_mask = attention_mask[:, :, :, :key_states.shape[-2]]
+        attn_output = self.sdpa(
+            query_states, key_states, value_states,
+            attn_mask=attn_mask, scale=self.scaling,
+        )
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, -1)
         return self.o_proj(attn_output)
 
 
 class ThinkerTextMLP(nn.Module):
-    """Dense SiLU-gated MLP (for mlp_only_layers or when decoder_sparse_step doesn't match)."""
+    """Dense SiLU-gated MLP (for mlp_only_layers or when decoder_sparse_step doesn't match).
+    Uses level1 Linear and Swish operators."""
     def __init__(self, hidden_size: int, intermediate_size: int):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.gate_proj = Linear(hidden_size, intermediate_size, bias=False)
+        self.up_proj = Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = Linear(intermediate_size, hidden_size, bias=False)
+        self.swish = Swish()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(self.swish(self.gate_proj(x)) * self.up_proj(x))
 
 
 class ThinkerTextTopKRouter(nn.Module):
@@ -904,8 +879,8 @@ class ThinkerTextDecoderLayer(nn.Module):
             )
         else:
             self.mlp = ThinkerTextMLP(hidden_size, intermediate_size)
-        self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps, learnable_weight=True, dim=-1)
+        self.post_attention_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps, learnable_weight=True, dim=-1)
 
     def forward(
         self,
@@ -1076,7 +1051,7 @@ class Model(nn.Module):
                 num_experts_per_tok=num_experts_per_tok,
                 norm_topk_prob=norm_topk_prob,
             ))
-        self.norm = RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.norm = RMSNorm(hidden_size, eps=rms_norm_eps, learnable_weight=True, dim=-1)
 
         # Level1 MultimodalRotaryEmbedding for LLM M-RoPE (interleaved mode for Qwen3-Omni)
         self.rotary_emb = MultimodalRotaryEmbedding(

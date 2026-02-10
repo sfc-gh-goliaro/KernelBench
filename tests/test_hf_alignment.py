@@ -530,20 +530,22 @@ def _build_qwen3vl_key_mapping(hf_state, kb_state) -> dict:
       model.language_model.norm.weight -> KB: norm.weight
       lm_head.weight -> KB: lm_head.weight
     
-    Key differences from Qwen2-VL:
-      - Vision MLP uses linear_fc1/linear_fc2 (same names in HF and KB)
-      - PatchMerger uses norm/linear_fc1/linear_fc2 (not ln_q/mlp.0/mlp.2)
-      - Has pos_embed (nn.Embedding) in vision encoder
-      - Has deepstack_merger_list in vision encoder
-      - Text attention has q_norm/k_norm
+    KB level1 operator wrappers add extra nesting:
+      Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
+      LayerNorm: .ln.weight/.ln.bias -> HF: .weight/.bias
+      Linear, RMSNorm, PatchEmbed3D: no extra nesting (weight/bias stored directly)
     """
     mapping = {}  # kb_key -> hf_key
     
     for kb_key in kb_state.keys():
-        # Unwrap level1 Embedding wrapper for embed_tokens
         unwrapped = kb_key
+        
+        # Unwrap level1 Embedding wrapper for embed_tokens
         if unwrapped.startswith('embed_tokens.embedding.'):
             unwrapped = unwrapped.replace('embed_tokens.embedding.', 'embed_tokens.')
+        
+        # Unwrap level1 LayerNorm wrapper (.ln.weight -> .weight, .ln.bias -> .bias)
+        unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
         
         # Try with model.language_model. prefix for LLM backbone weights
         if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
@@ -578,6 +580,11 @@ def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
       model.norm.weight -> KB: norm.weight
       lm_head.weight -> KB: lm_head.weight  (direct match)
     
+    KB level1 operator wrappers add extra nesting:
+      Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
+      LayerNorm: .ln.weight/.ln.bias -> HF: .weight/.bias
+      Linear, RMSNorm, PatchEmbed3D: no extra nesting (weight/bias stored directly)
+    
     Expert weights need special handling:
       HF: model.layers.{i}.mlp.experts.{e}.{gate,up,down}_proj.weight (per-expert)
       KB: layers.{i}.mlp.experts.gate_up_proj (fused 3D), layers.{i}.mlp.experts.down_proj (3D)
@@ -596,6 +603,9 @@ def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
         # Unwrap level1 Embedding wrapper for embed_tokens
         if unwrapped.startswith('embed_tokens.embedding.'):
             unwrapped = unwrapped.replace('embed_tokens.embedding.', 'embed_tokens.')
+        
+        # Unwrap level1 LayerNorm wrapper (.ln.weight -> .weight, .ln.bias -> .bias)
+        unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
         
         # Try with model. prefix for LLM backbone weights
         if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
