@@ -474,15 +474,29 @@ def _build_qwen2vl_key_mapping(hf_state, kb_state) -> dict:
     
     KB level1 operator wrappers add extra nesting:
       Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
+      LayerNorm: .ln.weight/.ln.bias -> HF: .weight/.bias
+      PatchEmbed3D: .patch_embed_3d.proj. -> HF: .proj.
+      PatchMerger MLP: .mlp_fc1. -> HF: .mlp.0., .mlp_fc2. -> HF: .mlp.2.
       Linear: no extra nesting (weight/bias stored directly)
     """
     mapping = {}  # kb_key -> hf_key
     
     for kb_key in kb_state.keys():
-        # Unwrap level1 Embedding wrapper for embed_tokens
+        # Unwrap level1 operator wrappers
         unwrapped = kb_key
+        
+        # Unwrap level1 Embedding wrapper for embed_tokens
         if unwrapped.startswith('embed_tokens.embedding.'):
             unwrapped = unwrapped.replace('embed_tokens.embedding.', 'embed_tokens.')
+        
+        # Unwrap level1 LayerNorm wrapper (.ln.weight -> .weight, .ln.bias -> .bias)
+        unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
+        
+        # Unwrap level1 PatchEmbed3D wrapper (.patch_embed_3d.proj. -> .proj.)
+        unwrapped = unwrapped.replace('.patch_embed_3d.proj.', '.proj.')
+        
+        # Unwrap PatchMerger MLP level1 Linear wrappers (.mlp_fc1. -> .mlp.0., .mlp_fc2. -> .mlp.2.)
+        unwrapped = unwrapped.replace('.mlp_fc1.', '.mlp.0.').replace('.mlp_fc2.', '.mlp.2.')
         
         # Try with model.language_model. prefix for LLM backbone weights
         # (embed_tokens, layers, norm, rotary_emb)
@@ -759,8 +773,8 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
         missing_in_hf = []
         
         for kb_key, kb_tensor in kb_state.items():
-            # Skip vision rotary embedding (computed locally, different format)
-            if 'visual.rotary_pos_emb.inv_freq' in kb_key:
+            # Skip rotary embedding buffers (computed locally, different format)
+            if 'rotary' in kb_key and any(b in kb_key for b in ('inv_freq', 'cos_cached', 'sin_cached')):
                 skipped_buffers += 1
                 continue
             
@@ -1354,16 +1368,19 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     
     # num_kv_heads: different models use different attribute names
     # - Llama/Mistral: num_key_value_heads
-    # - Falcon: num_kv_heads, or multi_query=True means 1 KV head (MQA)
+    # - Falcon: multi_query=True means 1 KV head (MQA); note that Falcon's
+    #   HF config sets num_kv_heads equal to num_attention_heads even when
+    #   multi_query is True, so we must check multi_query first.
     # - BLOOM: uses full MHA, so num_kv_heads = num_heads
-    num_kv_heads = getattr(hf_config, 'num_key_value_heads', None)
-    if num_kv_heads is None:
-        num_kv_heads = getattr(hf_config, 'num_kv_heads', None)
-    if num_kv_heads is None:
-        # Check for Falcon's multi_query attribute (MQA = 1 KV head)
-        if getattr(hf_config, 'multi_query', False):
-            num_kv_heads = 1
-        else:
+    if getattr(hf_config, 'multi_query', False):
+        # Falcon MQA: multi_query=True overrides num_kv_heads (which is misleadingly
+        # set to num_attention_heads in the HF Falcon config)
+        num_kv_heads = 1
+    else:
+        num_kv_heads = getattr(hf_config, 'num_key_value_heads', None)
+        if num_kv_heads is None:
+            num_kv_heads = getattr(hf_config, 'num_kv_heads', None)
+        if num_kv_heads is None:
             # Default to full attention (num_kv_heads = num_heads)
             num_kv_heads = num_heads
     
@@ -1948,8 +1965,10 @@ def loaded_models(request):
     try:
         return load_models(model_name, max_layers), model_name, max_layers
     except ValueError as e:
+        print(e)
         pytest.skip(str(e))
     except Exception as e:
+        print(e)
         pytest.skip(f"Could not load {model_name}: {e}")
 
 
@@ -2510,6 +2529,7 @@ def test_prefill_alignment(loaded_models):
         # Whisper: test with real audio samples from LibriSpeech
         # HF path: uses WhisperProcessor (official feature extractor)
         # KB path: uses KB's built-in WhisperFeatureExtractor (level1 MelSpectrogram)
+        # Both run STFT on GPU in float32 for bit-identical mel spectrograms.
         assert whisper_processor is not None, "WhisperProcessor required for Whisper"
         
         # Load real audio samples (decode manually with soundfile to avoid
@@ -2534,8 +2554,11 @@ def test_prefill_alignment(loaded_models):
             audio_array, sampling_rate = sf.read(io.BytesIO(audio_bytes))
             
             # HF path: process audio with the official Whisper feature extractor
+            # Use device=DEVICE so both HF and KB run their STFT on the same
+            # device (GPU), avoiding CPU-vs-GPU numerical differences.
             input_features_hf = whisper_processor.feature_extractor(
                 audio_array, sampling_rate=sampling_rate, return_tensors="pt",
+                device=DEVICE,
             ).input_features.to(device=DEVICE, dtype=DTYPE)
             
             # KB path: pass raw audio waveform — KB's WhisperFeatureExtractor

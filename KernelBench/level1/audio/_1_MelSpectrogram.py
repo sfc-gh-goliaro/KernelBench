@@ -135,11 +135,17 @@ class Model(nn.Module):
             mel_fb = torch.from_numpy(filters_np.T).float()
         else:
             mel_fb = self._create_mel_filterbank_htk()
+        # Register mel filterbank and Hann window as buffers so they follow
+        # .to(device=...) calls.  We also keep numpy copies so forward() can
+        # always reconstruct full-precision float32 tensors even after the
+        # parent model is cast to a lower dtype (e.g. bfloat16).
         self.register_buffer('mel_fb', mel_fb)
+        self._mel_fb_np = mel_fb.numpy().copy()
         
         # Create Hann window
         window = torch.hann_window(n_fft)
         self.register_buffer('window', window)
+        self._window_np = window.numpy().copy()
     
     def _hz_to_mel(self, freq: float) -> float:
         """Convert Hz to HTK mel scale."""
@@ -188,10 +194,16 @@ class Model(nn.Module):
         Returns:
             Mel spectrogram (batch, n_mels, time_frames)
         """
-        # STFT requires float32; use float32 buffers for numerical accuracy
+        # STFT requires float32.  We recreate the Hann window directly on the
+        # target device (torch.hann_window uses device-native math, so GPU and
+        # CPU windows can differ by ~6e-8; creating on-device matches the HF
+        # WhisperFeatureExtractor which does the same).
+        # The mel filterbank is reconstructed from a numpy copy to guarantee
+        # full float32 precision even when the parent model has been cast to a
+        # lower dtype (e.g. bfloat16 degrades the registered buffer copy).
         waveform = waveform.float()
-        window = self.window.float()
-        mel_fb = self.mel_fb.float()
+        window = torch.hann_window(self.n_fft, device=waveform.device)
+        mel_fb = torch.from_numpy(self._mel_fb_np).to(device=waveform.device)
 
         # STFT
         stft = torch.stft(

@@ -143,7 +143,9 @@ class WhisperFeatureExtractor(nn.Module):
             (batch, n_mels, 3000) log-mel spectrogram features
         """
         # Feature extraction must be done in float32 for numerical accuracy
-        # (matches HuggingFace / OpenAI Whisper behavior)
+        # (matches HuggingFace / OpenAI Whisper behavior).
+        # MelSpectrogram uses authoritative float32 numpy copies of its buffers
+        # so precision is preserved even when the parent model is cast to bf16.
         orig_dtype = waveform.dtype
         waveform = waveform.float()
 

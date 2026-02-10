@@ -18,7 +18,8 @@ class Model(nn.Module):
     """
     
     def __init__(self, img_size: int = 224, num_frames: int = 8, patch_size: int = 16,
-                 temporal_patch_size: int = 2, in_channels: int = 3, embed_dim: int = 768):
+                 temporal_patch_size: int = 2, in_channels: int = 3, embed_dim: int = 768,
+                 bias: bool = True):
         """
         Initialize 3D patch embedding.
         
@@ -29,6 +30,7 @@ class Model(nn.Module):
             temporal_patch_size: Temporal patch size
             in_channels: Number of input channels
             embed_dim: Embedding dimension
+            bias: If True, adds a learnable bias to the Conv3d projection. Default: True
         """
         super(Model, self).__init__()
         self.img_size = img_size
@@ -45,7 +47,8 @@ class Model(nn.Module):
         self.proj = nn.Conv3d(
             in_channels, embed_dim,
             kernel_size=(temporal_patch_size, patch_size, patch_size),
-            stride=(temporal_patch_size, patch_size, patch_size)
+            stride=(temporal_patch_size, patch_size, patch_size),
+            bias=bias,
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

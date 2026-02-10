@@ -313,20 +313,19 @@ class Model(nn.Module):
         else:
             inv_freq = compute_default_inv_freq(head_dim, base)
 
-        if mode == "complex":
-            # For complex mode, keep inv_freq in float32 to match HuggingFace precision.
-            # Store as a regular attribute to survive model.to(bfloat16) conversions.
-            self._inv_freq_float32 = inv_freq
-            self.register_buffer("inv_freq", inv_freq.clone(), persistent=False)
-        else:
-            self.register_buffer('inv_freq', inv_freq)
+        # Store inv_freq in float32 as a non-buffer attribute to survive
+        # model.to(bfloat16) conversions. The buffer is for device tracking only.
+        self._inv_freq_float32 = inv_freq
+        self.register_buffer("inv_freq", inv_freq.clone(), persistent=False)
+
+        if mode != "complex":
             # Precompute cos and sin for all positions
             self._update_cos_sin_cache(max_seq_len)
 
     def _apply(self, fn):
-        """Override to keep inv_freq in float32 when model dtype changes (complex mode)."""
+        """Override to keep inv_freq in float32 when model dtype changes."""
         super()._apply(fn)
-        if self.mode == "complex" and hasattr(self, '_inv_freq_float32'):
+        if hasattr(self, '_inv_freq_float32'):
             target_device = self.inv_freq.device
             self.inv_freq = self._inv_freq_float32.to(device=target_device)
             self._inv_freq_float32 = self._inv_freq_float32.to(device=target_device)
@@ -483,6 +482,35 @@ class Model(nn.Module):
         rotated = torch.cat((-x2, x1), dim=-1)
 
         return x * cos + rotated * sin
+
+    def apply_rotary(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply rotary embeddings to q and k using pre-computed cos/sin.
+
+        This is useful for models that compute their own cos/sin externally
+        (e.g. Qwen2-VL's M-RoPE or vision RoPE) but want to reuse the
+        core rotate_half logic.
+
+        Only supported for mode="half_rotate".
+
+        Args:
+            q: Query tensor (arbitrary shape, rotation applied along last dim)
+            k: Key tensor (same shape convention as q)
+            cos: Cosine values, broadcastable to q/k shape
+            sin: Sine values, broadcastable to q/k shape
+
+        Returns:
+            Tuple of (rotated_q, rotated_k)
+        """
+        q_rotated = self._apply_rotary_half(q, cos, sin)
+        k_rotated = self._apply_rotary_half(k, cos, sin)
+        return q_rotated, k_rotated
 
 
 # ============================================================================

@@ -3,7 +3,7 @@ Falcon Dense Decoder Model
 
 A decoder-only transformer implementing Falcon architecture with paged KV cache:
 - LayerNorm normalization (with bias)
-- Multi-Query Attention (MQA) with per-layer paged KV cache
+- Multi-Query/Grouped-Query Attention (MQA/GQA) with per-layer paged KV cache
 - Rotary Position Embeddings (RoPE)
 - GELU MLP
 - Parallel attention and MLP (Falcon-style)
@@ -56,12 +56,15 @@ class FalconAttention(nn.Module):
     - Fused QKV projection (query_key_value)
     - RotaryEmbedding for position encoding
     - MultiQueryAttention for attention with paged KV cache
+    
+    Supports both MQA (num_kv_heads=1, Falcon-7B) and GQA (num_kv_heads>1, Falcon-40B).
     """
     
     def __init__(
         self,
         hidden_size: int,
         num_heads: int,
+        num_kv_heads: int,
         head_dim: int,
         max_seq_len: int = 2048,
         rope_theta: float = 10000.0,
@@ -72,15 +75,17 @@ class FalconAttention(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.layer_idx = layer_idx
 
         # Falcon uses fused QKV projection
-        # Output size: num_heads * head_dim (Q) + head_dim (K) + head_dim (V)
-        # For Falcon-7B with MQA: 71 * 64 + 64 + 64 = 4544 + 128 = 4672
+        # Output size: num_heads * head_dim (Q) + num_kv_heads * head_dim (K) + num_kv_heads * head_dim (V)
+        # For Falcon-7B with MQA: 71 * 64 + 1 * 64 + 1 * 64 = 4544 + 128 = 4672
+        # For Falcon-40B with GQA: 128 * 64 + 8 * 64 + 8 * 64 = 8192 + 1024 = 9216
         self.query_key_value = Linear(
             hidden_size, 
-            num_heads * head_dim + 2 * head_dim,  # Q + K + V (single KV head)
+            num_heads * head_dim + 2 * num_kv_heads * head_dim,  # Q + K + V
             bias=False
         )
         self.dense = Linear(num_heads * head_dim, hidden_size, bias=False)
@@ -93,9 +98,10 @@ class FalconAttention(nn.Module):
             layout="bhsd",
         )
         
-        # MQA with its own KV cache (per-layer cache)
+        # Attention with paged KV cache (per-layer cache)
         self.attn = MultiQueryAttention(
             num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
             head_dim=head_dim,
             block_size=block_size,
             num_blocks=num_blocks,
@@ -124,10 +130,10 @@ class FalconAttention(nn.Module):
         qkv = self.query_key_value(x)
         
         # Split into Q, K, V
-        # Q: num_heads * head_dim, K: head_dim, V: head_dim
+        # Q: num_heads * head_dim, K: num_kv_heads * head_dim, V: num_kv_heads * head_dim
         q_size = self.num_heads * self.head_dim
-        k_size = self.head_dim
-        v_size = self.head_dim
+        k_size = self.num_kv_heads * self.head_dim
+        v_size = self.num_kv_heads * self.head_dim
         
         q = qkv[..., :q_size]
         k = qkv[..., q_size:q_size + k_size]
@@ -135,8 +141,8 @@ class FalconAttention(nn.Module):
         
         # Reshape to (batch, heads, seq, head_dim)
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(batch_size, seq_len, 1, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len, 1, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
         # Compute position IDs accounting for context_lens
         # For prefill: positions are 0, 1, 2, ... seq_len-1
@@ -188,6 +194,7 @@ class FalconDecoderLayer(nn.Module):
         self,
         hidden_size: int,
         num_heads: int,
+        num_kv_heads: int,
         head_dim: int,
         intermediate_size: int,
         max_seq_len: int = 2048,
@@ -206,6 +213,7 @@ class FalconDecoderLayer(nn.Module):
         self.self_attention = FalconAttention(
             hidden_size=hidden_size,
             num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
             head_dim=head_dim,
             max_seq_len=max_seq_len,
             rope_theta=rope_theta,
@@ -265,6 +273,7 @@ class Model(nn.Module):
         hidden_size: int = 4544,
         num_layers: int = 32,
         num_heads: int = 71,
+        num_kv_heads: int = 1,
         head_dim: Optional[int] = None,
         intermediate_size: int = 18176,
         max_seq_len: int = 2048,
@@ -283,6 +292,7 @@ class Model(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.intermediate_size = intermediate_size
         self.max_seq_len = max_seq_len
@@ -299,6 +309,7 @@ class Model(nn.Module):
             FalconDecoderLayer(
                 hidden_size=hidden_size,
                 num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
                 intermediate_size=intermediate_size,
                 max_seq_len=max_seq_len,
