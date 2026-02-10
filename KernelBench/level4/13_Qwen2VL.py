@@ -44,6 +44,9 @@ This model uses level1 operators from KernelBench:
 - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
 - MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
 - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
+- PagedKVCache + AttentionMetadata from level1/attention/_1_PagedKVCache
+- ScaledDotProductAttention(mode="eager") from level1/attention/_2_Attention
+- MultiHeadAttention(mode="eager") from level1/attention/_2_Attention
 - MatMul from level1/matmul/_1_MatMul
 
 Note: Using level1 wrappers changes the state-dict key names (e.g.
@@ -66,10 +69,12 @@ from ..level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.activations._7_Swish import Model as Swish
 from ..level1.activations._3_Sigmoid import Model as Sigmoid
-from ..level1.matmul._1_MatMul import Model as MatMul
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
 from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEmbedding
+from ..level1.attention._1_PagedKVCache import AttentionMetadata, create_attention_metadata
+from ..level1.attention._2_Attention import ScaledDotProductAttention
+from ..level1.attention._2_Attention import MultiHeadAttention
 
 
 # ============================================================================
@@ -114,7 +119,12 @@ class VisionAttention(nn.Module):
     
     Processes variable-length sequences defined by cu_seqlens (cumulative
     sequence lengths), applying per-image attention (not across images).
-    Uses level1 Linear and RotaryEmbedding operators.
+
+    Uses level1 operators:
+    - Linear for QKV and output projections
+    - RotaryEmbedding for the core rotate_half operation
+    - ScaledDotProductAttention(mode="eager") for attention math
+      (matches HuggingFace eager attention numerically)
     """
     def __init__(self, dim: int, num_heads: int):
         super().__init__()
@@ -126,6 +136,8 @@ class VisionAttention(nn.Module):
         self.scaling = self.head_dim ** -0.5
         # Level1 RotaryEmbedding for the core rotate_half operation
         self.rotary = RotaryEmbedding(self.head_dim, max_seq_len=1, base=10000.0)
+        # Level1 ScaledDotProductAttention with eager mode for HF-aligned attention
+        self.sdpa = ScaledDotProductAttention(mode="eager")
 
     def forward(
         self,
@@ -168,10 +180,8 @@ class VisionAttention(nn.Module):
 
         attn_outputs = []
         for q, k, v in zip(*splits):
-            # Standard scaled dot-product attention
-            attn_weights = torch.matmul(q, k.transpose(2, 3)) * self.scaling
-            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-            attn_out = torch.matmul(attn_weights, v)
+            # Level1 ScaledDotProductAttention (eager mode) for HF-aligned attention
+            attn_out = self.sdpa(q, k, v, scale=self.scaling)
             attn_out = attn_out.transpose(1, 2).contiguous()
             attn_outputs.append(attn_out)
 
@@ -298,21 +308,15 @@ class VisionEncoder(nn.Module):
 # ============================================================================
 
 
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """Repeat KV heads for GQA."""
-    batch, num_kv_heads, slen, head_dim = hidden_states.shape
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(
-        batch, num_kv_heads, n_rep, slen, head_dim
-    )
-    return hidden_states.reshape(batch, num_kv_heads * n_rep, slen, head_dim)
-
-
 class Qwen2VLAttention(nn.Module):
-    """Multi-headed attention with GQA and M-RoPE, with optional KV cache.
-    Uses level1 Linear and RotaryEmbedding operators.
+    """Multi-headed attention with GQA, M-RoPE, and paged KV cache.
     
+    Uses level1 operators:
+    - Linear for Q/K/V/O projections
+    - RotaryEmbedding for the core rotate_half operation
+    - MultiHeadAttention(mode="eager") for paged KV cache + GQA +
+      attention math (matches HuggingFace eager attention numerically)
+
     Position embeddings (cos, sin) arrive pre-assembled from the level1
     MultimodalRotaryEmbedding operator at the model level."""
     def __init__(
@@ -320,14 +324,14 @@ class Qwen2VLAttention(nn.Module):
         hidden_size: int,
         num_heads: int,
         num_kv_heads: int,
+        block_size: int = 16,
+        num_blocks: int = 1024,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
         self.num_kv_heads = num_kv_heads
-        self.num_key_value_groups = num_heads // num_kv_heads
-        self.scaling = self.head_dim ** -0.5
 
         self.q_proj = Linear(hidden_size, num_heads * self.head_dim, bias=True)
         self.k_proj = Linear(hidden_size, num_kv_heads * self.head_dim, bias=True)
@@ -335,21 +339,24 @@ class Qwen2VLAttention(nn.Module):
         self.o_proj = Linear(num_heads * self.head_dim, hidden_size, bias=False)
         # Level1 RotaryEmbedding for the core rotate_half operation
         self.rotary = RotaryEmbedding(self.head_dim, max_seq_len=1, base=10000.0)
-
-        # KV cache (populated during generation)
-        self._cached_k: Optional[torch.Tensor] = None
-        self._cached_v: Optional[torch.Tensor] = None
+        # Level1 MultiHeadAttention with eager mode: paged KV cache + GQA + attention
+        self.mha = MultiHeadAttention(
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=self.head_dim,
+            block_size=block_size,
+            num_blocks=num_blocks,
+            mode="eager",
+        )
 
     def reset_cache(self):
-        self._cached_k = None
-        self._cached_v = None
+        self.mha.reset_cache()
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        attn_metadata: AttentionMetadata,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        use_cache: bool = False,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
 
@@ -365,25 +372,8 @@ class Qwen2VLAttention(nn.Module):
             query_states, key_states, cos, sin
         )
 
-        # KV cache: append and use full history
-        if use_cache:
-            if self._cached_k is not None:
-                key_states = torch.cat([self._cached_k, key_states], dim=2)
-                value_states = torch.cat([self._cached_v, value_states], dim=2)
-            self._cached_k = key_states
-            self._cached_v = value_states
-
-        # GQA: repeat KV heads
-        key_states = repeat_kv(key_states, self.num_key_value_groups)
-        value_states = repeat_kv(value_states, self.num_key_value_groups)
-
-        # Scaled dot-product attention
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
-        if attention_mask is not None:
-            causal_mask = attention_mask[:, :, :, :key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
+        # Level1 MultiHeadAttention handles: KV cache write/gather + GQA repeat + attention math
+        attn_output = self.mha(query_states, key_states, value_states, attn_metadata)
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, -1)
         return self.o_proj(attn_output)
 
@@ -402,7 +392,7 @@ class Qwen2MLP(nn.Module):
 
 
 class Qwen2VLDecoderLayer(nn.Module):
-    """Decoder layer with RMSNorm, attention, MLP."""
+    """Decoder layer with RMSNorm, attention (paged KV cache), MLP."""
     def __init__(
         self,
         hidden_size: int,
@@ -410,10 +400,13 @@ class Qwen2VLDecoderLayer(nn.Module):
         num_kv_heads: int,
         intermediate_size: int,
         rms_norm_eps: float,
+        block_size: int = 16,
+        num_blocks: int = 1024,
     ):
         super().__init__()
         self.self_attn = Qwen2VLAttention(
-            hidden_size, num_heads, num_kv_heads
+            hidden_size, num_heads, num_kv_heads,
+            block_size=block_size, num_blocks=num_blocks,
         )
         self.mlp = Qwen2MLP(hidden_size, intermediate_size)
         self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps, learnable_weight=True, dim=-1)
@@ -422,17 +415,15 @@ class Qwen2VLDecoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        attn_metadata: AttentionMetadata,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        use_cache: bool = False,
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         hidden_states = self.self_attn(
             hidden_states,
-            attention_mask=attention_mask,
+            attn_metadata=attn_metadata,
             position_embeddings=position_embeddings,
-            use_cache=use_cache,
         )
         hidden_states = residual + hidden_states
 
@@ -441,6 +432,10 @@ class Qwen2VLDecoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
         return hidden_states
+
+    def reset_cache(self):
+        """Reset this layer's KV cache."""
+        self.self_attn.reset_cache()
 
 
 # ============================================================================
@@ -462,6 +457,11 @@ class Model(nn.Module):
     - Swish/SiLU from level1/activations/_7_Swish
     - Sigmoid from level1/activations/_3_Sigmoid
     - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
+    - MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
+    - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
+    - PagedKVCache from level1/attention/_1_PagedKVCache
+    - ScaledDotProductAttention(mode="eager") from level1/attention/_2_Attention
+    - MultiHeadAttention(mode="eager") from level1/attention/_2_Attention
     - MatMul from level1/matmul/_1_MatMul
 
     Supports variants: 2B, 7B
@@ -492,6 +492,9 @@ class Model(nn.Module):
         rms_norm_eps: float = 1e-6,
         rope_theta: float = 1000000.0,
         mrope_section: Optional[List[int]] = None,
+        # Paged KV cache config
+        block_size: int = 16,
+        num_blocks: int = 1024,
         # Special token ids
         image_token_id: int = 151655,
         video_token_id: int = 151656,
@@ -510,6 +513,8 @@ class Model(nn.Module):
         self.vision_end_token_id = vision_end_token_id
         self.spatial_merge_size = spatial_merge_size
         self.mrope_section = mrope_section
+        self.block_size = block_size
+        self.num_blocks = num_blocks
 
         # Vision encoder
         self.visual = VisionEncoder(
@@ -534,6 +539,8 @@ class Model(nn.Module):
                 num_kv_heads=num_key_value_heads,
                 intermediate_size=intermediate_size,
                 rms_norm_eps=rms_norm_eps,
+                block_size=block_size,
+                num_blocks=num_blocks,
             )
             for _ in range(num_hidden_layers)
         ])
@@ -667,31 +674,31 @@ class Model(nn.Module):
     def reset_cache(self):
         """Reset KV caches in all attention layers."""
         for layer in self.layers:
-            layer.self_attn.reset_cache()
+            layer.reset_cache()
 
     def forward(
         self,
         input_ids: torch.LongTensor,
+        attn_metadata: AttentionMetadata,
         pixel_values: Optional[torch.Tensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
         pixel_values_videos: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        use_cache: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass matching HuggingFace Qwen2VLForConditionalGeneration.
 
         Args:
             input_ids: (batch, seq_len) token ids
+            attn_metadata: Attention metadata for paged KV cache
             pixel_values: flattened image pixel values for vision encoder
             image_grid_thw: (num_images, 3) -- temporal, height, width
             video_grid_thw: (num_videos, 3)
             pixel_values_videos: flattened video pixel values
             attention_mask: (batch, seq_len) padding mask
             position_ids: (3, batch, seq_len) pre-computed M-RoPE positions
-            use_cache: if True, use and update KV caches for generation
 
         Returns:
             logits: (batch, seq_len, vocab_size)
@@ -730,58 +737,6 @@ class Model(nn.Module):
                 input_ids, image_grid_thw, video_grid_thw, attention_mask,
             )
 
-        # Build causal attention mask
-        batch_size, seq_len = inputs_embeds.shape[:2]
-        min_dtype = torch.finfo(inputs_embeds.dtype).min
-
-        if use_cache:
-            # When using cache, we need the mask to cover all cached + new tokens
-            past_len = self.layers[0].self_attn._cached_k.shape[2] if self.layers[0].self_attn._cached_k is not None else 0
-            total_len = past_len + seq_len
-            # For decode (seq_len=1), no causal masking needed -- query attends to all past
-            # For prefill, standard causal mask
-            if seq_len == 1:
-                causal_mask = torch.zeros(
-                    (batch_size, 1, 1, total_len),
-                    device=inputs_embeds.device,
-                    dtype=inputs_embeds.dtype,
-                )
-            else:
-                causal_mask = torch.zeros(
-                    (batch_size, 1, seq_len, total_len),
-                    device=inputs_embeds.device,
-                    dtype=inputs_embeds.dtype,
-                )
-                # Causal: can't attend to future positions
-                for qi in range(seq_len):
-                    causal_mask[:, :, qi, past_len + qi + 1:] = min_dtype
-        elif attention_mask is not None:
-            causal_mask = torch.zeros(
-                (batch_size, 1, seq_len, seq_len),
-                device=inputs_embeds.device,
-                dtype=inputs_embeds.dtype,
-            )
-            causal_triu = torch.triu(
-                torch.ones(seq_len, seq_len, device=inputs_embeds.device, dtype=torch.bool),
-                diagonal=1,
-            )
-            causal_mask.masked_fill_(causal_triu.unsqueeze(0).unsqueeze(0), min_dtype)
-            padding_positions = (attention_mask == 0)
-            causal_mask.masked_fill_(
-                padding_positions[:, None, None, :], min_dtype
-            )
-        else:
-            causal_mask = torch.zeros(
-                (1, 1, seq_len, seq_len),
-                device=inputs_embeds.device,
-                dtype=inputs_embeds.dtype,
-            )
-            causal_triu = torch.triu(
-                torch.ones(seq_len, seq_len, device=inputs_embeds.device, dtype=torch.bool),
-                diagonal=1,
-            )
-            causal_mask.masked_fill_(causal_triu.unsqueeze(0).unsqueeze(0), min_dtype)
-
         # Compute M-RoPE cos/sin using level1 MultimodalRotaryEmbedding
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
 
@@ -790,14 +745,104 @@ class Model(nn.Module):
         for layer in self.layers:
             hidden_states = layer(
                 hidden_states,
-                attention_mask=causal_mask,
+                attn_metadata=attn_metadata,
                 position_embeddings=position_embeddings,
-                use_cache=use_cache,
             )
 
         hidden_states = self.norm(hidden_states)
         logits = self.lm_head(hidden_states)
         return logits
+
+    def _prefill(
+        self,
+        input_ids: torch.LongTensor,
+        block_table: torch.Tensor,
+        pixel_values: Optional[torch.Tensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        video_grid_thw: Optional[torch.LongTensor] = None,
+        pixel_values_videos: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+    ) -> torch.Tensor:
+        """
+        Prefill (prompt processing) - process all prompt tokens at once.
+
+        Args:
+            input_ids: (batch_size, seq_len) prompt token IDs
+            block_table: (batch_size, max_blocks_per_seq) block assignments
+            pixel_values, image_grid_thw, etc.: multimodal inputs
+            attention_mask: (batch, seq_len) padding mask
+            position_ids: (3, batch, seq_len) pre-computed M-RoPE positions
+
+        Returns:
+            logits: (batch_size, seq_len, vocab_size)
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+
+        context_lens = torch.zeros(batch_size, dtype=torch.long, device=device)
+        seq_lens = torch.full((batch_size,), seq_len, dtype=torch.long, device=device)
+
+        attn_metadata = create_attention_metadata(
+            batch_size=batch_size,
+            seq_lens=seq_lens,
+            context_lens=context_lens,
+            block_table=block_table,
+            block_size=self.block_size,
+            device=device,
+        )
+
+        return self.forward(
+            input_ids,
+            attn_metadata=attn_metadata,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            pixel_values_videos=pixel_values_videos,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+        )
+
+    def _decode(
+        self,
+        input_ids: torch.LongTensor,
+        block_table: torch.Tensor,
+        context_lens: torch.Tensor,
+        position_ids: Optional[torch.LongTensor] = None,
+    ) -> torch.Tensor:
+        """
+        Decode (token generation) - process one token at a time.
+
+        Args:
+            input_ids: (batch_size, 1) new token IDs
+            block_table: (batch_size, max_blocks_per_seq) block assignments
+            context_lens: (batch_size,) tokens already processed
+            position_ids: (3, batch, 1) M-RoPE positions for the new token
+
+        Returns:
+            logits: (batch_size, 1, vocab_size)
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+
+        assert seq_len == 1, "Decode should process one token at a time"
+
+        seq_lens = context_lens + 1
+
+        attn_metadata = create_attention_metadata(
+            batch_size=batch_size,
+            seq_lens=seq_lens,
+            context_lens=context_lens,
+            block_table=block_table,
+            block_size=self.block_size,
+            device=device,
+        )
+
+        return self.forward(
+            input_ids,
+            attn_metadata=attn_metadata,
+            position_ids=position_ids,
+        )
 
     @torch.no_grad()
     def generate(
@@ -809,21 +854,38 @@ class Model(nn.Module):
         video_grid_thw: Optional[torch.LongTensor] = None,
         pixel_values_videos: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        block_table: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Greedy autoregressive generation with KV caching.
+        Greedy autoregressive generation with paged KV caching.
 
         Args:
             input_ids: (batch, prompt_len) prompt token IDs
             max_new_tokens: number of tokens to generate
             pixel_values, image_grid_thw, etc.: multimodal inputs (used in prefill only)
             attention_mask: (batch, prompt_len) padding mask
+            block_table: optional pre-allocated block table
 
         Returns:
             generated_ids: (batch, prompt_len + max_new_tokens)
         """
         self.reset_cache()
         batch_size, prompt_len = input_ids.shape
+        device = input_ids.device
+
+        # Allocate block table if not provided
+        if block_table is None:
+            max_seq_len = prompt_len + max(max_new_tokens, 1)
+            max_blocks = (max_seq_len + self.block_size - 1) // self.block_size
+            block_table = torch.arange(
+                max_blocks, device=device, dtype=torch.long
+            ).unsqueeze(0).expand(batch_size, -1).contiguous()
+            for i in range(batch_size):
+                block_table[i] = torch.arange(
+                    i * max_blocks,
+                    (i + 1) * max_blocks,
+                    device=device,
+                ) % self.num_blocks
 
         # Compute position_ids and mrope_position_deltas for the full prompt
         position_ids, mrope_position_deltas = self.get_rope_index(
@@ -831,19 +893,20 @@ class Model(nn.Module):
         )
 
         # Prefill: process all prompt tokens, cache K/V
-        logits = self.forward(
+        logits = self._prefill(
             input_ids,
+            block_table=block_table,
             pixel_values=pixel_values,
             image_grid_thw=image_grid_thw,
             video_grid_thw=video_grid_thw,
             pixel_values_videos=pixel_values_videos,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            use_cache=True,
         )
 
         next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
         generated = [input_ids, next_token]
+        context_lens = torch.full((batch_size,), prompt_len, dtype=torch.long, device=device)
 
         # Decode loop
         for step in range(max_new_tokens - 1):
@@ -852,11 +915,13 @@ class Model(nn.Module):
             seq_pos = prompt_len + step + mrope_position_deltas.squeeze(1)
             new_position_ids = seq_pos.unsqueeze(0).unsqueeze(-1).expand(3, batch_size, 1).long()
 
-            logits = self.forward(
+            logits = self._decode(
                 next_token,
+                block_table=block_table,
+                context_lens=context_lens,
                 position_ids=new_position_ids,
-                use_cache=True,
             )
+            context_lens += 1
             next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
             generated.append(next_token)
 

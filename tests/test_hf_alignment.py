@@ -2476,9 +2476,14 @@ def test_prefill_alignment(loaded_models):
                 )
                 hf_logits = hf_out.logits  # (batch, seq_len, vocab)
                 
-                # KernelBench forward
-                kb_logits = kb_model(
+                # KernelBench forward (uses _prefill to handle attn_metadata creation)
+                kb_model.reset_cache()
+                _batch_size, _seq_len = input_ids.shape
+                _max_blocks = (_seq_len + kb_model.block_size - 1) // kb_model.block_size
+                _block_table = torch.arange(_max_blocks, device=DEVICE, dtype=torch.long).unsqueeze(0).expand(_batch_size, -1).contiguous()
+                kb_logits = kb_model._prefill(
                     input_ids=input_ids,
+                    block_table=_block_table,
                     pixel_values=pixel_values,
                     image_grid_thw=image_grid_thw,
                     attention_mask=attention_mask,

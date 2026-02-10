@@ -7,14 +7,22 @@ This file provides two operators:
    Parameter-free attention math supporting MHA, GQA, MQA, cross-attention,
    additive bias (ALiBi, T5 relative position bias), causal masking, and
    configurable scaling. Does NOT own any weights or KV cache.
-   Used by: all models (Llama, Falcon, BLOOM, Mixtral, T5, etc.)
+   Used by: all models (Llama, Falcon, BLOOM, Mixtral, T5, Qwen2-VL, etc.)
+
+   Supports two modes:
+   - "sdpa" (default): delegates to F.scaled_dot_product_attention for best
+     performance. May use flash-attention or memory-efficient kernels.
+   - "eager": explicit matmul -> mask -> softmax(float32) -> matmul path.
+     Matches HuggingFace eager attention numerically (bit-identical).
+     Use when exact numerical alignment is required.
 
 2. MultiHeadAttention
    Attention with paged KV cache for autoregressive generation.
    Composes PagedKVCache + ScaledDotProductAttention.
    Handles MHA (num_kv_heads == num_heads), GQA (num_kv_heads < num_heads),
    and MQA (num_kv_heads == 1) transparently via the num_kv_heads parameter.
-   Used by: Llama, Falcon, Mixtral, and any decoder-only model with paged KV cache.
+   Used by: Llama, Falcon, Mixtral, Qwen2-VL, and any decoder-only model
+   with paged KV cache.
 
 Input shapes (BHSD layout):
     q: (batch_size, num_heads, seq_len_q, head_dim)
@@ -31,7 +39,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from typing import Optional
+from typing import Optional, Literal
 
 from ._1_PagedKVCache import Model as PagedKVCache, AttentionMetadata
 
@@ -40,17 +48,43 @@ from ._1_PagedKVCache import Model as PagedKVCache, AttentionMetadata
 # ScaledDotProductAttention — parameter-free attention math
 # ============================================================================
 
+def _repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """Repeat KV heads for GQA/MQA: (batch, kv_heads, seq, dim) -> (batch, q_heads, seq, dim)."""
+    if n_rep == 1:
+        return hidden_states
+    batch, num_kv_heads, slen, head_dim = hidden_states.shape
+    hidden_states = hidden_states[:, :, None, :, :].expand(
+        batch, num_kv_heads, n_rep, slen, head_dim
+    )
+    return hidden_states.reshape(batch, num_kv_heads * n_rep, slen, head_dim)
+
+
 class ScaledDotProductAttention(nn.Module):
     """
     Generic Scaled Dot-Product Attention (parameter-free).
 
-    Handles GQA/MQA by repeating K/V heads to match Q heads before calling
-    F.scaled_dot_product_attention. Supports optional additive bias
-    (ALiBi, T5 relative position bias) and attention masks.
+    Supports two modes:
+    - "sdpa" (default): delegates to F.scaled_dot_product_attention. May use
+      flash-attention or memory-efficient kernels for best performance.
+    - "eager": explicit matmul -> mask -> softmax(float32) -> matmul path.
+      Matches HuggingFace eager attention numerically (bit-identical).
+
+    Both modes handle GQA/MQA transparently: when num_kv_heads != num_heads
+    the K/V heads are expanded before computing attention.
+
+    Supports optional additive bias (ALiBi, T5 relative position bias) and
+    attention masks in both modes.
     """
 
-    def __init__(self):
+    def __init__(self, mode: Literal["sdpa", "eager"] = "sdpa"):
+        """
+        Args:
+            mode: Attention backend.
+                  "sdpa" - F.scaled_dot_product_attention (default, fast)
+                  "eager" - explicit matmul+softmax (HuggingFace-aligned)
+        """
         super(ScaledDotProductAttention, self).__init__()
+        self.mode = mode
 
     def forward(
         self,
@@ -84,6 +118,23 @@ class ScaledDotProductAttention(nn.Module):
         Returns:
             Attention output (batch, num_heads, seq_q, head_dim)
         """
+        if self.mode == "eager":
+            return self._forward_eager(q, k, v, attn_mask, attn_bias, is_causal, scale, dropout_p)
+        else:
+            return self._forward_sdpa(q, k, v, attn_mask, attn_bias, is_causal, scale, dropout_p)
+
+    def _forward_sdpa(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attn_mask: Optional[torch.Tensor],
+        attn_bias: Optional[torch.Tensor],
+        is_causal: bool,
+        scale: Optional[float],
+        dropout_p: float,
+    ) -> torch.Tensor:
+        """F.scaled_dot_product_attention path (fast, may use flash/mem-efficient kernels)."""
         enable_gqa = k.shape[1] != q.shape[1]
 
         # Combine attn_mask and attn_bias into a single mask for SDPA
@@ -122,6 +173,65 @@ class ScaledDotProductAttention(nn.Module):
         )
         return out
 
+    def _forward_eager(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attn_mask: Optional[torch.Tensor],
+        attn_bias: Optional[torch.Tensor],
+        is_causal: bool,
+        scale: Optional[float],
+        dropout_p: float,
+    ) -> torch.Tensor:
+        """Explicit matmul+softmax path matching HuggingFace eager attention."""
+        # Expand KV heads for GQA/MQA
+        num_q_heads = q.shape[1]
+        num_kv_heads = k.shape[1]
+        if num_kv_heads != num_q_heads:
+            assert num_q_heads % num_kv_heads == 0
+            n_rep = num_q_heads // num_kv_heads
+            k = _repeat_kv(k, n_rep)
+            v = _repeat_kv(v, n_rep)
+
+        # Scaling
+        if scale is None:
+            scale = 1.0 / math.sqrt(q.shape[-1])
+
+        # Q @ K^T * scale
+        attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale
+
+        # Additive bias (ALiBi, T5 relative position bias)
+        if attn_bias is not None:
+            attn_weights = attn_weights + attn_bias
+
+        # Causal mask
+        if is_causal:
+            seq_q = q.shape[2]
+            seq_k = k.shape[2]
+            causal_mask = torch.triu(
+                torch.ones(seq_q, seq_k, device=q.device, dtype=torch.bool),
+                diagonal=seq_k - seq_q + 1,
+            )
+            attn_weights = attn_weights.masked_fill(
+                causal_mask.unsqueeze(0).unsqueeze(0),
+                torch.finfo(attn_weights.dtype).min,
+            )
+
+        # Explicit attention mask
+        if attn_mask is not None:
+            attn_weights = attn_weights + attn_mask
+
+        # Softmax in float32 for numerical stability, then cast back
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+
+        # Dropout
+        if dropout_p > 0.0 and self.training:
+            attn_weights = F.dropout(attn_weights, p=dropout_p)
+
+        # Attn_weights @ V
+        return torch.matmul(attn_weights, v)
+
 
 # ============================================================================
 # MultiHeadAttention — unified MHA/GQA/MQA with Paged KV Cache
@@ -144,7 +254,8 @@ class MultiHeadAttention(nn.Module):
 
     def __init__(self, num_heads: int, num_kv_heads: int, head_dim: int,
                  block_size: int = 16, num_blocks: int = 1024,
-                 max_seq_len: int = 8192, dropout: float = 0.0):
+                 max_seq_len: int = 8192, dropout: float = 0.0,
+                 mode: Literal["sdpa", "eager"] = "sdpa"):
         """
         Args:
             num_heads: Number of query heads
@@ -155,6 +266,9 @@ class MultiHeadAttention(nn.Module):
             num_blocks: Total number of blocks in the cache pool
             max_seq_len: Maximum sequence length (informational)
             dropout: Attention dropout probability
+            mode: Attention backend for ScaledDotProductAttention.
+                  "sdpa" - F.scaled_dot_product_attention (default, fast)
+                  "eager" - explicit matmul+softmax (HuggingFace-aligned)
         """
         super(MultiHeadAttention, self).__init__()
         self.num_heads = num_heads
@@ -175,7 +289,7 @@ class MultiHeadAttention(nn.Module):
         )
 
         # Attention math
-        self.attn = ScaledDotProductAttention()
+        self.attn = ScaledDotProductAttention(mode=mode)
 
     def reset_cache(self):
         """Reset the KV cache to zeros."""
