@@ -60,8 +60,3 @@ class Model(nn.Module):
         
         # Concatenate and fuse
         return F.silu(self.bn3(self.conv3(torch.cat([y1, y2], dim=1))))
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

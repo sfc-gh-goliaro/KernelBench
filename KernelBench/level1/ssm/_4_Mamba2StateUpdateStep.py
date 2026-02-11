@@ -87,27 +87,3 @@ class Model(nn.Module):
         y = y.reshape(batch_size, -1)[:, None, ...]
 
         return h_new, y
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-num_heads = 128
-head_dim = 64
-state_size = 128
-
-
-def get_inputs():
-    x = torch.randn(batch_size, num_heads, head_dim)
-    h = torch.randn(batch_size, num_heads, head_dim, state_size)
-    dA = torch.randn(batch_size, num_heads, head_dim, state_size).exp()
-    dB = torch.randn(batch_size, num_heads, head_dim, state_size)
-    C = torch.randn(batch_size, num_heads, state_size)
-    D = torch.ones(num_heads)
-    return [x, h, dA, dB, C, D]
-
-
-def get_init_inputs():
-    return []

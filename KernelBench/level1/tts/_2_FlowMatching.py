@@ -101,8 +101,3 @@ class Model(nn.Module):
         target_vel = self.target_velocity(x_0, x_1)
 
         return x_t, predicted_velocity, target_vel
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

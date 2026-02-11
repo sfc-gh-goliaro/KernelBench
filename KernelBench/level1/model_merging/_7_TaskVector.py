@@ -42,8 +42,3 @@ class Model(nn.Module):
         """
         task_vector = finetuned_weights - pretrained_weights
         return task_vector * self.scaling_factor
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

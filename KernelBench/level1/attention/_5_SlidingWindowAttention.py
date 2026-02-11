@@ -147,8 +147,3 @@ class Model(nn.Module):
         attn_output = torch.matmul(attn_weights, v_full)
 
         return attn_output  # (batch, heads, seq_len, head_dim)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

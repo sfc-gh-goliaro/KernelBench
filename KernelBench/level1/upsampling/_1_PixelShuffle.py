@@ -40,8 +40,3 @@ class Model(nn.Module):
             Upsampled tensor (batch_size, channels, height * r, width * r)
         """
         return self.pixel_shuffle(x)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

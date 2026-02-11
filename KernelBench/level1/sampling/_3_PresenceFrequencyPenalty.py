@@ -63,8 +63,3 @@ class Model(nn.Module):
 
         # Subtract penalty from logits
         return logits - penalty
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -116,8 +116,3 @@ class Model(nn.Module):
             final_hidden_states.index_add_(0, token_idx, weighted.to(final_hidden_states.dtype))
         
         return final_hidden_states.view(batch_size, seq_len, self.hidden_size)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

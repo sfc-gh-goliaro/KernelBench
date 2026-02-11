@@ -89,30 +89,3 @@ class Model(nn.Module):
         scan_output = scan_output * F.silu(gate)
 
         return scan_output, ssm_state
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-intermediate_size = 4096
-seq_len = 512
-state_size = 16
-
-
-def get_inputs():
-    dA = torch.randn(batch_size, intermediate_size, seq_len, state_size)
-    dB_x = torch.randn(batch_size, intermediate_size, seq_len, state_size)
-    return [
-        torch.randn(batch_size, intermediate_size, seq_len),   # x
-        dA,
-        dB_x,
-        torch.randn(batch_size, seq_len, state_size),          # C
-        torch.randn(intermediate_size),                        # D
-        torch.randn(batch_size, intermediate_size, seq_len),   # gate
-    ]
-
-
-def get_init_inputs():
-    return []

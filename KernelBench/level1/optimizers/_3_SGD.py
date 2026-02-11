@@ -63,8 +63,3 @@ class Model(nn.Module):
         param = param - self.lr * grad
         
         return param, momentum_buffer
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -80,8 +80,3 @@ class Model(nn.Module):
             current_tokens = new_tokens
 
         return current_tokens
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

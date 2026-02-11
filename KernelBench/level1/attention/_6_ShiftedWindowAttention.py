@@ -231,8 +231,3 @@ class Model(nn.Module):
         context_layer = context_layer.view(new_context_layer_shape)
 
         return context_layer
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

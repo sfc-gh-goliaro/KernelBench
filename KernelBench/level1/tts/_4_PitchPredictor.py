@@ -100,8 +100,3 @@ class Model(nn.Module):
             pitch_embeddings = pitch_embeddings.masked_fill(padding_mask.unsqueeze(-1), 0.0)
 
         return pitch_values, pitch_embeddings
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

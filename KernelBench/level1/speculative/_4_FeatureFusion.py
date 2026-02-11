@@ -66,8 +66,3 @@ class Model(nn.Module):
         output = self.norm(hidden_states + fused)
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

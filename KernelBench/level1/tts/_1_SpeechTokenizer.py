@@ -78,8 +78,3 @@ class Model(nn.Module):
         token_indices = torch.stack(all_indices, dim=-1)  # (batch, time, num_codebooks)
 
         return token_indices
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -48,8 +48,3 @@ class Model(nn.Module):
             Scaled tensor (batch_size, seq_length, hidden_size)
         """
         return x * self.scales
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

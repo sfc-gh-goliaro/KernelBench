@@ -61,8 +61,3 @@ class Model(nn.Module):
         
         # Concatenate and fuse
         return self.fuse(torch.cat([high, low], dim=1))
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

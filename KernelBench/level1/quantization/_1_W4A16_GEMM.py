@@ -78,8 +78,3 @@ class Model(nn.Module):
         
         # Matrix multiplication
         return torch.matmul(x, weight)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

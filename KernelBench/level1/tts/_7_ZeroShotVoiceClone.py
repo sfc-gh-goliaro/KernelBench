@@ -85,8 +85,3 @@ class Model(nn.Module):
         speaker_embed = self.speaker_proj(pooled)
 
         return speaker_embed
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

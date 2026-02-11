@@ -330,33 +330,3 @@ class Model(nn.Module):
         bbox_pred = self.bbox_head(tgt).sigmoid()
         
         return class_logits, bbox_pred
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 2
-num_classes = 91
-
-
-def get_inputs():
-    features = [
-        torch.randn(batch_size, 256, 80, 80),
-        torch.randn(batch_size, 512, 40, 40),
-        torch.randn(batch_size, 1024, 20, 20),
-        torch.randn(batch_size, 1024, 10, 10),
-    ]
-    return [features]
-
-
-def get_init_inputs():
-    return [{
-        'hidden_dim': 256,
-        'nheads': 8,
-        'num_encoder_layers': 3,
-        'num_decoder_layers': 3,
-        'num_feature_levels': 4,
-        'num_queries': 100,
-        'num_classes': num_classes,
-    }]

@@ -44,8 +44,3 @@ class Model(nn.Module):
             Embeddings of shape (batch_size, seq_len, hidden_size)
         """
         return self.embedding(input_ids)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

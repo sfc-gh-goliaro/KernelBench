@@ -56,8 +56,3 @@ class Model(nn.Module):
             similarity = torch.matmul(query_norm, candidate_norm.transpose(-2, -1))
 
         return similarity / self.temperature
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

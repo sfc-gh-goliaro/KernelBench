@@ -55,8 +55,3 @@ class Model(nn.Module):
             raise ValueError(f"Unknown pool_type: {self.pool_type}")
         
         return self.norm(pooled)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

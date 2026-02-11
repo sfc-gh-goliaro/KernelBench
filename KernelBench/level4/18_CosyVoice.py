@@ -254,32 +254,3 @@ class Model(nn.Module):
         context = self.text_encoder(input_ids)
         velocity = self.flow(mel_spectrogram, timesteps, context)
         return velocity
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-text_len = 64
-mel_len = 256
-num_mel_bins = 80
-vocab_size = 8192
-
-
-def get_inputs():
-    input_ids = torch.randint(0, vocab_size, (batch_size, text_len))
-    mel = torch.randn(batch_size, mel_len, num_mel_bins)
-    timesteps = torch.rand(batch_size)
-    return [input_ids, mel, timesteps]
-
-
-def get_init_inputs():
-    return [{
-        'hidden_size': 512,
-        'num_heads': 8,
-        'num_layers': 4,
-        'flow_layers': 4,
-        'vocab_size': vocab_size,
-        'num_mel_bins': num_mel_bins,
-    }]

@@ -90,8 +90,3 @@ class Model(nn.Module):
         v_quant, v_scale = self.quantize(v)
         
         return (k_quant, k_scale), (v_quant, v_scale)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -102,8 +102,3 @@ class Model(nn.Module):
             x = x.flatten(2)           # (batch, embed_dim, num_patches)
             x = x.transpose(1, 2)      # (batch, num_patches, embed_dim)
             return x
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -41,8 +41,3 @@ class Model(nn.Module):
             Guided output
         """
         return uncond_output + self.guidance_scale * (cond_output - uncond_output)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

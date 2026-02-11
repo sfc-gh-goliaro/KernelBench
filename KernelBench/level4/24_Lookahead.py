@@ -324,30 +324,3 @@ class Model(nn.Module):
         x = self.norm(x)
         logits = self.lm_head(x)
         return logits
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-sequence_length = 128
-hidden_size = 4096
-vocab_size = 128256
-
-
-def get_inputs():
-    input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length))
-    return [input_ids]
-
-
-def get_init_inputs():
-    return [{
-        'hidden_size': hidden_size,
-        'num_heads': 32,
-        'num_kv_heads': 8,
-        'head_dim': 128,
-        'intermediate_size': 14336,
-        'num_layers': 8,
-        'vocab_size': vocab_size,
-    }]

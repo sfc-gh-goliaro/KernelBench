@@ -254,23 +254,3 @@ class Model(nn.Module):
         x = self.fc(x)
 
         return x
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 16
-image_size = 224
-num_classes = 1000
-
-
-def get_inputs():
-    return [torch.randn(batch_size, 3, image_size, image_size)]
-
-
-def get_init_inputs():
-    return [{
-        'layers': [3, 4, 6, 3],
-        'num_classes': num_classes,
-    }]

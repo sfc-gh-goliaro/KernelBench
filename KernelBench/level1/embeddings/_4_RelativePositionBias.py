@@ -67,8 +67,3 @@ class Model(nn.Module):
         )
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
         return relative_position_bias
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

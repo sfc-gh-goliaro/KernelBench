@@ -97,27 +97,3 @@ class Model(nn.Module):
 
         ht = h if output_final_state else None
         return o.to(orig_dtype), ht
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 2
-seq_len = 256
-num_heads = 4
-head_k_dim = 64
-head_v_dim = 128
-
-
-def get_inputs():
-    import torch.nn.functional as F
-    q = torch.randn(batch_size, seq_len, num_heads, head_k_dim)
-    k = torch.randn(batch_size, seq_len, num_heads, head_k_dim)
-    v = torch.randn(batch_size, seq_len, num_heads, head_v_dim)
-    gk = F.logsigmoid(torch.randn(batch_size, seq_len, num_heads, head_k_dim))
-    return [q, k, v, gk]
-
-
-def get_init_inputs():
-    return []

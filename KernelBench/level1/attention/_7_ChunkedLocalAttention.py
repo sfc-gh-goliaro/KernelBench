@@ -165,8 +165,3 @@ class Model(nn.Module):
             output[:, :, i:i+1, :] = out_i
 
         return output  # (batch, heads, seq_len, head_dim)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

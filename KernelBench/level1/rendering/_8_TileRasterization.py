@@ -140,8 +140,3 @@ class Model(nn.Module):
                 accumulated_alpha[tile_y_start:tile_y_end, tile_x_start:tile_x_end] = tile_alpha
 
         return image
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -64,8 +64,3 @@ class Model(nn.Module):
         aux_loss = self.num_experts * (f * P).sum()
         
         return self.aux_loss_coef * aux_loss
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

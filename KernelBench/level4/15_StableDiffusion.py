@@ -322,33 +322,3 @@ class Model(nn.Module):
             h = up_block(h, skip_connections, time_emb, context)
         
         return self.out(h)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 2
-height = 64
-width = 64
-in_channels = 4
-context_length = 77
-context_dim = 768
-
-
-def get_inputs():
-    x = torch.randn(batch_size, in_channels, height, width)
-    timesteps = torch.randint(0, 1000, (batch_size,))
-    context = torch.randn(batch_size, context_length, context_dim)
-    return [x, timesteps, context]
-
-
-def get_init_inputs():
-    return [{
-        'in_channels': in_channels,
-        'out_channels': in_channels,
-        'model_channels': 320,
-        'num_res_blocks': 2,
-        'context_dim': context_dim,
-        'channel_mult': [1, 2, 4],
-    }]

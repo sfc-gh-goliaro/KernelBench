@@ -90,8 +90,3 @@ class Model(nn.Module):
             queries = layer['ff'](queries) + residual
         
         return queries
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -80,25 +80,3 @@ class Model(nn.Module):
             output = F.silu(output)
 
         return output, new_conv_state
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 16
-d_inner = 10240
-kernel_size = 4
-
-
-def get_inputs():
-    return [
-        torch.randn(batch_size, d_inner),                  # new_token
-        torch.randn(batch_size, d_inner, kernel_size),      # conv_state
-        torch.randn(d_inner, 1, kernel_size),               # conv_weight
-        torch.randn(d_inner),                               # conv_bias
-    ]
-
-
-def get_init_inputs():
-    return []

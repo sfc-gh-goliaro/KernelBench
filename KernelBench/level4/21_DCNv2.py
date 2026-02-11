@@ -215,30 +215,3 @@ class Model(nn.Module):
         logits = self.output(combined)
         
         return self.sigmoid(logits)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 1024
-sparse_feature_dim = 26
-dense_feature_dim = 13
-embedding_dim = 16
-
-
-def get_inputs():
-    sparse_features = torch.randint(0, 1000, (batch_size, sparse_feature_dim))
-    dense_features = torch.randn(batch_size, dense_feature_dim)
-    return [sparse_features, dense_features]
-
-
-def get_init_inputs():
-    return [{
-        'sparse_feature_dim': sparse_feature_dim,
-        'dense_feature_dim': dense_feature_dim,
-        'embedding_dim': embedding_dim,
-        'cross_layers': 6,
-        'deep_layers': [256, 128, 64],
-        'num_classes': 1,
-    }]

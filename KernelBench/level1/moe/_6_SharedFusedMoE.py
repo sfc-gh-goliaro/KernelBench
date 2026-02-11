@@ -239,8 +239,3 @@ class Model(nn.Module):
         if batch_size is not None:
             return final_hidden_states.view(batch_size, seq_len, -1)
         return final_hidden_states
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -252,28 +252,3 @@ class Model(nn.Module):
             'sparse': sparse_embedding,
             'colbert': colbert_embedding,
         }
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 8
-sequence_length = 512
-vocab_size = 250002
-
-
-def get_inputs():
-    input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length))
-    attention_mask = torch.ones(batch_size, sequence_length)
-    return [input_ids, attention_mask]
-
-
-def get_init_inputs():
-    return [{
-        'hidden_size': 1024,
-        'num_heads': 16,
-        'num_layers': 8,
-        'vocab_size': vocab_size,
-        'intermediate_size': 4096,
-    }]

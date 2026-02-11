@@ -65,8 +65,3 @@ class Model(nn.Module):
         output = torch.cat(gathered_tensors, dim=self.gather_dim)
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

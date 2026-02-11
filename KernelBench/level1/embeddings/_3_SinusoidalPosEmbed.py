@@ -54,8 +54,3 @@ class Model(nn.Module):
             Positional embeddings (seq_length, hidden_size)
         """
         return self.pe[:seq_length]
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

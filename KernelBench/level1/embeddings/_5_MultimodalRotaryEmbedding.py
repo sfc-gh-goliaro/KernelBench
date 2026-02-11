@@ -188,8 +188,3 @@ class Model(nn.Module):
             cos, sin = self._assemble_chunked(cos, sin)
 
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

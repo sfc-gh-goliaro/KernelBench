@@ -1026,34 +1026,3 @@ class Model(nn.Module):
             generated.append(next_token)
 
         return torch.cat(generated, dim=1)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 1
-sequence_length = 256
-vocab_size = 151936
-
-
-def get_inputs():
-    input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length))
-    return [input_ids]
-
-
-def get_init_inputs():
-    return [{
-        'vision_depth': 4,
-        'vision_hidden_size': 1152,
-        'vision_out_hidden_size': 3584,
-        'vision_num_heads': 16,
-        'vision_intermediate_size': 4304,
-        'hidden_size': 3584,
-        'num_hidden_layers': 4,
-        'num_attention_heads': 28,
-        'num_key_value_heads': 4,
-        'intermediate_size': 18944,
-        'vocab_size': vocab_size,
-        'deepstack_visual_indexes': [1, 2, 3],
-    }]

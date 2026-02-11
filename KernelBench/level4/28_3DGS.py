@@ -306,28 +306,3 @@ class Model(nn.Module):
             means, scales, rotations, opacities, sh_coeffs,
             view_matrix, proj_matrix, camera_center
         )
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-num_gaussians = 10000
-image_height = 256
-image_width = 256
-
-
-def get_inputs():
-    view_matrix = torch.eye(4)
-    proj_matrix = torch.eye(4)
-    camera_center = torch.zeros(3)
-    return [view_matrix, proj_matrix, camera_center]
-
-
-def get_init_inputs():
-    return [{
-        'sh_degree': 3,
-        'max_gaussians': num_gaussians,
-        'image_height': image_height,
-        'image_width': image_width,
-    }]

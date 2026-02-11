@@ -254,24 +254,3 @@ class Model(nn.Module):
         
         # Detection head
         return self.detect([n3, n4, n5])
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 8
-image_size = 640
-num_classes = 80
-
-
-def get_inputs():
-    return [torch.randn(batch_size, 3, image_size, image_size)]
-
-
-def get_init_inputs():
-    return [{
-        'depth_mult': 1.0,
-        'width_mult': 1.0,
-        'num_classes': num_classes,
-    }]

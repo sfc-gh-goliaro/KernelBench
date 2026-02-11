@@ -287,31 +287,3 @@ class Model(nn.Module):
         """
         token_embeddings = self.embed_tokens(input_ids)
         return self.draft_head(hidden_states, token_embeddings, tree_mask)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-sequence_length = 64
-hidden_size = 4096
-vocab_size = 128256
-
-
-def get_inputs():
-    hidden_states = torch.randn(batch_size, sequence_length, hidden_size)
-    input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length))
-    return [hidden_states, input_ids]
-
-
-def get_init_inputs():
-    return [{
-        'hidden_size': hidden_size,
-        'num_heads': 32,
-        'num_kv_heads': 8,
-        'head_dim': 128,
-        'intermediate_size': 14336,
-        'vocab_size': vocab_size,
-        'draft_layers': 1,
-    }]

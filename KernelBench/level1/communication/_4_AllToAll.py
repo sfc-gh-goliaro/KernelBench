@@ -62,8 +62,3 @@ class Model(nn.Module):
         output = torch.cat(output_chunks, dim=0)
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

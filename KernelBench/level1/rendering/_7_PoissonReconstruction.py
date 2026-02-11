@@ -108,8 +108,3 @@ class Model(nn.Module):
             solution = self.jacobi_iteration(solution, divergence)
 
         return solution
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

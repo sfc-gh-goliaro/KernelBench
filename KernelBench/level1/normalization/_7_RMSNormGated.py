@@ -102,23 +102,3 @@ class Model(nn.Module):
             hidden_states = hidden_states * F.silu(gate.to(torch.float32))
 
         return hidden_states.to(input_dtype)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 8
-seq_len = 2048
-hidden_size = 8192
-
-
-def get_inputs():
-    return [
-        torch.randn(batch_size, seq_len, hidden_size),
-        torch.randn(batch_size, seq_len, hidden_size),  # gate
-    ]
-
-
-def get_init_inputs():
-    return [hidden_size]

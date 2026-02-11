@@ -61,8 +61,3 @@ class Model(nn.Module):
         routing_weights = F.softmax(routing_weights, dim=-1)
         
         return expert_indices, routing_weights
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

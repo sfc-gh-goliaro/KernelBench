@@ -67,8 +67,3 @@ class Model(nn.Module):
         param = param - self.lr * m_hat / (v_hat.sqrt() + self.eps)
         
         return param, m, v
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

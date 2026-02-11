@@ -66,8 +66,3 @@ class Model(nn.Module):
         expert_counts = torch.bincount(sorted_expert_indices, minlength=self.num_experts)
         
         return dispatched_inputs, dispatch_indices, expert_counts
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

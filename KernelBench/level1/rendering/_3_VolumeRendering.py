@@ -77,8 +77,3 @@ class Model(nn.Module):
             rgb = rgb + (1 - acc) * 1.0  # White background
 
         return rgb, depth, weights
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

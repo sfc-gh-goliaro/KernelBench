@@ -88,8 +88,3 @@ class Model(nn.Module):
             durations = durations.masked_fill(padding_mask, 0.0)
 
         return durations
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

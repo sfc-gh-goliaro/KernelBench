@@ -142,8 +142,3 @@ class Model(nn.Module):
         # Double for rotate_half: (total_patches, dim*2) = (total_patches, head_dim)
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         return emb.cos(), emb.sin()
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

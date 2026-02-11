@@ -75,20 +75,3 @@ class Model(nn.Module):
         x = x.transpose(1, 2)
 
         return x
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 16
-seq_len = 1024
-d_inner = 10240  # Mamba-2 Codestral: intermediate_size + 2 * n_groups * state_size
-
-
-def get_inputs():
-    return [torch.randn(batch_size, seq_len, d_inner)]
-
-
-def get_init_inputs():
-    return [d_inner]

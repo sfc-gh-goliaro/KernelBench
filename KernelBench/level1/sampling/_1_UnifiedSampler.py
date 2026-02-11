@@ -185,8 +185,3 @@ class Model(nn.Module):
         sampled_tokens = torch.multinomial(probs, num_samples=1).squeeze(-1)
 
         return sampled_tokens
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

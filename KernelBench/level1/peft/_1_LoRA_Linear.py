@@ -132,11 +132,3 @@ class Model(nn.Module):
         output[valid_indices] = output[valid_indices] + lora_output
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration (Multi-tenant serving scenario)
-# ============================================================================
-
-import os
-import sys

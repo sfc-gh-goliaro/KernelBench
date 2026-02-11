@@ -80,8 +80,3 @@ class Model(nn.Module):
             projected_encoder = self.encoder_proj(encoder_features)
             combined = projected_encoder + decoder_features
             return self.out_proj(combined)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

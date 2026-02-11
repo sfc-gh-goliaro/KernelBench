@@ -139,8 +139,3 @@ class Model(nn.Module):
         output[valid_indices] = output[valid_indices] + self.scaling * lora_output
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration (Multi-tenant quantized serving)
-# ============================================================================

@@ -110,8 +110,3 @@ class Model(nn.Module):
         final_logits[~exited] = layer_logits[~exited]
 
         return final_logits, exit_layer
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

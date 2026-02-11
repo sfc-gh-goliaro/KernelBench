@@ -60,8 +60,3 @@ class Model(nn.Module):
             scores = torch.matmul(user_embeddings, item_embeddings.transpose(-2, -1))
 
         return scores / self.temperature
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

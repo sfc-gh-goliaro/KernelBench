@@ -49,8 +49,3 @@ class Model(nn.Module):
             random_tensor.div_(keep_prob)
         
         return x * random_tensor
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

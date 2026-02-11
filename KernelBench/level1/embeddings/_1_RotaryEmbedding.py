@@ -511,8 +511,3 @@ class Model(nn.Module):
         q_rotated = self._apply_rotary_half(q, cos, sin)
         k_rotated = self._apply_rotary_half(k, cos, sin)
         return q_rotated, k_rotated
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

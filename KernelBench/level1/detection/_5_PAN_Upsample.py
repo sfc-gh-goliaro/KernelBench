@@ -38,8 +38,3 @@ class Model(nn.Module):
     def forward(self, high_level: torch.Tensor, low_level: torch.Tensor) -> torch.Tensor:
         high = self.upsample(high_level)
         return self.conv(torch.cat([high, low_level], dim=1))
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

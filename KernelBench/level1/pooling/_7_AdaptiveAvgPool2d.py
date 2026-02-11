@@ -38,8 +38,3 @@ class Model(nn.Module):
             Pooled tensor (batch_size, channels, output_height, output_width)
         """
         return self.pool(x)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

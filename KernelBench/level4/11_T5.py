@@ -742,38 +742,3 @@ class Model(nn.Module):
         if return_logits:
             return generated_ids, all_logits
         return generated_ids
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-encoder_seq_len = 256
-decoder_seq_len = 128
-vocab_size = 32128
-d_model = 1024
-num_heads = 16
-d_kv = 64
-d_ff = 2816
-num_layers = 6
-
-
-def get_inputs():
-    input_ids = torch.randint(0, vocab_size, (batch_size, encoder_seq_len))
-    decoder_input_ids = torch.randint(0, vocab_size, (batch_size, decoder_seq_len))
-    return [input_ids, decoder_input_ids]
-
-
-def get_init_inputs():
-    return [{
-        'd_model': d_model,
-        'num_heads': num_heads,
-        'd_kv': d_kv,
-        'd_ff': d_ff,
-        'num_encoder_layers': num_layers,
-        'num_decoder_layers': num_layers,
-        'vocab_size': vocab_size,
-        'is_gated_act': True,
-        'dense_act_fn': 'gelu_new',
-    }]

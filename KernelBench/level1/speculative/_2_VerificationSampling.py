@@ -137,8 +137,3 @@ class Model(nn.Module):
             accepted_tokens[~accept_mask] = 0
 
             return accepted_tokens, accept_mask, num_accepted, None
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

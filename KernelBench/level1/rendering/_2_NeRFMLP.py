@@ -112,8 +112,3 @@ class Model(nn.Module):
         output = torch.cat([color, F.softplus(density)], dim=-1)
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

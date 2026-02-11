@@ -580,34 +580,3 @@ class Model(nn.Module):
         input_features = self.feature_extractor(waveform)
         input_features = input_features.to(dtype=self.encoder.conv1.conv1d.weight.dtype)
         return self.forward(input_features, decoder_input_ids)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-audio_len = 3000
-n_mels = 80
-decoder_seq_len = 128
-vocab_size = 51865
-
-
-def get_inputs():
-    input_features = torch.randn(batch_size, n_mels, audio_len)
-    decoder_input_ids = torch.randint(0, vocab_size, (batch_size, decoder_seq_len))
-    return [input_features, decoder_input_ids]
-
-
-def get_init_inputs():
-    return [{
-        'd_model': 512,
-        'encoder_attention_heads': 8,
-        'decoder_attention_heads': 8,
-        'encoder_layers': 4,
-        'decoder_layers': 4,
-        'encoder_ffn_dim': 2048,
-        'decoder_ffn_dim': 2048,
-        'vocab_size': vocab_size,
-        'num_mel_bins': n_mels,
-    }]

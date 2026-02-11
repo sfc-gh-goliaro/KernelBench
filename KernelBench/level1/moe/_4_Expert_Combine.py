@@ -57,8 +57,3 @@ class Model(nn.Module):
         output.index_add_(0, dispatch_indices, weighted_outputs)
         
         return output
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -114,8 +114,3 @@ class Model(nn.Module):
         deltas = torch.cat([deltas, torch.full_like(deltas[:, :1], 1e10)], dim=-1)
 
         return points, t_vals, deltas
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

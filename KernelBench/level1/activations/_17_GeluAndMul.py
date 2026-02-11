@@ -44,8 +44,3 @@ class Model(nn.Module):
         
         # GELU(gate) * value
         return F.gelu(gate, approximate=self.approximate) * value
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

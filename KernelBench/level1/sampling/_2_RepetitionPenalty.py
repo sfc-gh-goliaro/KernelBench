@@ -59,8 +59,3 @@ class Model(nn.Module):
             penalized_logits[b, unique_tokens[neg_mask]] *= self.penalty
 
         return penalized_logits
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

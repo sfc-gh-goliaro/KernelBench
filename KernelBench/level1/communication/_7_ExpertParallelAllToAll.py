@@ -101,8 +101,3 @@ class Model(nn.Module):
         local_expert_indices = recv_expert_indices % experts_per_rank
 
         return recv_tokens, local_expert_indices, recv_counts
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

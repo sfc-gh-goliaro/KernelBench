@@ -320,8 +320,3 @@ def generate_tree_structure(num_draft: int, branching_factor: int = 2,
         current_level_end = next_token_idx
 
     return parent_ids
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

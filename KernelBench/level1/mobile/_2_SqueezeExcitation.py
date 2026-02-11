@@ -58,8 +58,3 @@ class Model(nn.Module):
         # Scale: broadcast and multiply
         se = se.view(batch_size, self.channels, 1, 1)
         return x * se
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

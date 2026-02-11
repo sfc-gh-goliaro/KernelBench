@@ -345,28 +345,3 @@ class Model(nn.Module):
             colors: (N, 3) rendered RGB colors
         """
         return self.renderer(ray_origins, ray_directions, self.density_color)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-num_rays = 4096
-
-
-def get_inputs():
-    ray_origins = torch.randn(num_rays, 3)
-    ray_directions = F.normalize(torch.randn(num_rays, 3), dim=-1)
-    return [ray_origins, ray_directions]
-
-
-def get_init_inputs():
-    return [{
-        'num_levels': 16,
-        'base_resolution': 16,
-        'log2_hashmap_size': 17,
-        'feature_dim': 2,
-        'hidden_dim': 64,
-        'num_layers': 2,
-        'num_samples': 32,
-    }]

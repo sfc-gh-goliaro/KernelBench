@@ -73,8 +73,3 @@ class Model(nn.Module):
         magnitude = torch.abs(stft_out)
         
         return magnitude
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -127,11 +127,3 @@ class Model(nn.Module):
         output[valid_indices] = x_valid + adapter_out
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration (Multi-tenant serving scenario)
-# ============================================================================
-
-import os
-import sys

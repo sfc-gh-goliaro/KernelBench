@@ -53,8 +53,3 @@ class Model(nn.Module):
         keep = ops.nms(boxes, scores, self.iou_threshold)
         
         return keep
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

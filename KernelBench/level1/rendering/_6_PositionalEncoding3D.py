@@ -76,8 +76,3 @@ class Model(nn.Module):
             encoded = torch.cat([positions, encoded], dim=-1)
 
         return encoded
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

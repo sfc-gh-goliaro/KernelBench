@@ -163,11 +163,3 @@ class Model(nn.Module):
         output[valid_indices] = dora_output
 
         return output
-
-
-# ============================================================================
-# Benchmark Configuration (Multi-tenant serving scenario)
-# ============================================================================
-
-import os
-import sys

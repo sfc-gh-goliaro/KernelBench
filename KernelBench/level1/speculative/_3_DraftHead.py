@@ -140,8 +140,3 @@ class Model(nn.Module):
 
         # Stack: (batch, num_draft_heads, vocab_size)
         return torch.stack(draft_logits, dim=1)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

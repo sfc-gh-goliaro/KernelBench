@@ -590,31 +590,3 @@ class Model(nn.Module):
         if return_logits:
             return generated_ids, all_logits
         return generated_ids
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 4
-sequence_length = 1024
-hidden_size = 2560
-num_hidden_layers = 8
-vocab_size = 32000
-num_heads = 10
-
-
-def get_inputs():
-    return [torch.randint(0, vocab_size, (batch_size, sequence_length))]
-
-
-def get_init_inputs():
-    return [{
-        'hidden_size': hidden_size,
-        'num_hidden_layers': num_hidden_layers,
-        'vocab_size': vocab_size,
-        'num_heads': num_heads,
-        'expand_k': 1.0,
-        'expand_v': 2.0,
-        'hidden_ratio': 2,
-    }]

@@ -45,8 +45,3 @@ class Model(nn.Module):
         # Gather last token for each sequence
         return hidden_states[torch.arange(batch_size, device=hidden_states.device), 
                             sequence_lengths.long()]
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

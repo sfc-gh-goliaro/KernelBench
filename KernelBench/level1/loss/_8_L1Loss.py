@@ -41,8 +41,3 @@ class Model(nn.Module):
             L1 loss value
         """
         return self.loss_fn(prediction, target)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -66,8 +66,3 @@ class Model(nn.Module):
         
         # Return both normalized output and gate for residual
         return x, gate.unsqueeze(1)
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -44,8 +44,3 @@ class Model(nn.Module):
         sum_mask = torch.clamp(mask_expanded.sum(dim=1), min=1e-9)
         
         return sum_embeddings / sum_mask
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

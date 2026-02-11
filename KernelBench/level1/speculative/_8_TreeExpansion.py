@@ -67,8 +67,3 @@ class Model(nn.Module):
         expanded_probs[:, ~expand_mask, :] = 0.0
 
         return expanded_tokens, expanded_probs, expand_mask
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

@@ -80,8 +80,3 @@ class Model(nn.Module):
         param = param - self.lr * trust_ratio * adam_update
         
         return param, m, v
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================

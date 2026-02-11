@@ -453,28 +453,3 @@ class Model(nn.Module):
         # Classifier
         logits = self.classifier(pooled_output)
         return logits
-
-
-# ============================================================================
-# Benchmark Configuration
-# ============================================================================
-
-batch_size = 8
-image_size = 192
-num_labels = 21841
-
-
-def get_inputs():
-    return [torch.randn(batch_size, 3, image_size, image_size)]
-
-
-def get_init_inputs():
-    return [{
-        'image_size': image_size,
-        'embed_dim': 192,
-        'depths': [2, 2, 18, 2],
-        'num_heads': [6, 12, 24, 48],
-        'window_size': 12,
-        'num_labels': num_labels,
-        'pretrained_window_sizes': [0, 0, 0, 0],
-    }]
