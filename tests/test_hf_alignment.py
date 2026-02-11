@@ -112,16 +112,16 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     "Qwen/Qwen2-VL-2B-Instruct": "KernelBench.level4.13_Qwen2VL",
     "Qwen/Qwen2-VL-7B-Instruct": "KernelBench.level4.13_Qwen2VL",
     # Qwen3-VL
-    "Qwen/Qwen3-VL-8B-Instruct": "KernelBench.level4.30_Qwen3VL",
+    "Qwen/Qwen3-VL-8B-Instruct": "KernelBench.level4.14_Qwen3VL",
     # Qwen3-Omni-MoE
-    "Qwen/Qwen3-Omni-30B-A3B-Instruct": "KernelBench.level4.31_Qwen3OmniMoe",
+    "Qwen/Qwen3-Omni-30B-A3B-Instruct": "KernelBench.level4.16_Qwen3OmniMoe",
     # Whisper
-    "openai/whisper-tiny": "KernelBench.level4.14_Whisper",
-    "openai/whisper-small": "KernelBench.level4.14_Whisper",
-    "openai/whisper-base": "KernelBench.level4.14_Whisper",
-    "openai/whisper-medium": "KernelBench.level4.14_Whisper",
-    "openai/whisper-large-v2": "KernelBench.level4.14_Whisper",
-    "openai/whisper-large-v3": "KernelBench.level4.14_Whisper",
+    "openai/whisper-tiny": "KernelBench.level4.15_Whisper",
+    "openai/whisper-small": "KernelBench.level4.15_Whisper",
+    "openai/whisper-base": "KernelBench.level4.15_Whisper",
+    "openai/whisper-medium": "KernelBench.level4.15_Whisper",
+    "openai/whisper-large-v2": "KernelBench.level4.15_Whisper",
+    "openai/whisper-large-v3": "KernelBench.level4.15_Whisper",
     # BLOOM variants
     "bigscience/bloom-560m": "KernelBench.level4.5_Bloom",
     "bigscience/bloom-1b1": "KernelBench.level4.5_Bloom",
