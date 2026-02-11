@@ -533,6 +533,7 @@ def _build_qwen3vl_key_mapping(hf_state, kb_state) -> dict:
     KB level1 operator wrappers add extra nesting:
       Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
       LayerNorm: .ln.weight/.ln.bias -> HF: .weight/.bias
+      InterpolatedPositionEmbedding: .pos_embed.pos_embed. -> HF: .pos_embed.
       Linear, RMSNorm, PatchEmbed3D: no extra nesting (weight/bias stored directly)
     """
     mapping = {}  # kb_key -> hf_key
@@ -546,6 +547,10 @@ def _build_qwen3vl_key_mapping(hf_state, kb_state) -> dict:
         
         # Unwrap level1 LayerNorm wrapper (.ln.weight -> .weight, .ln.bias -> .bias)
         unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
+        
+        # Unwrap level1 InterpolatedPositionEmbedding wrapper
+        # KB: visual.pos_embed.pos_embed.weight -> HF: visual.pos_embed.weight
+        unwrapped = unwrapped.replace('pos_embed.pos_embed.', 'pos_embed.')
         
         # Try with model.language_model. prefix for LLM backbone weights
         if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
@@ -583,6 +588,9 @@ def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
     KB level1 operator wrappers add extra nesting:
       Embedding: .embedding.weight -> HF: .weight (embed_tokens only)
       LayerNorm: .ln.weight/.ln.bias -> HF: .weight/.bias
+      InterpolatedPositionEmbedding: .pos_embed.pos_embed. -> HF: .pos_embed.
+      Conv2d: .conv2d.weight/.conv2d.bias -> HF: .weight/.bias (audio_tower conv layers)
+      TopKRouter Linear: .mlp.gate.weight.weight -> HF: .mlp.gate.weight
       Linear, RMSNorm, PatchEmbed3D: no extra nesting (weight/bias stored directly)
     
     Expert weights need special handling:
@@ -606,6 +614,17 @@ def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
         
         # Unwrap level1 LayerNorm wrapper (.ln.weight -> .weight, .ln.bias -> .bias)
         unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
+        
+        # Unwrap level1 InterpolatedPositionEmbedding wrapper
+        # KB: visual.pos_embed.pos_embed.weight -> HF: visual.pos_embed.weight
+        unwrapped = unwrapped.replace('pos_embed.pos_embed.', 'pos_embed.')
+        
+        # Unwrap level1 Conv2d wrapper (.conv2d.weight -> .weight, .conv2d.bias -> .bias)
+        unwrapped = unwrapped.replace('.conv2d.weight', '.weight').replace('.conv2d.bias', '.bias')
+        
+        # Unwrap level1 Linear wrapper for TopKRouter
+        # KB: .mlp.gate.weight.weight -> HF: .mlp.gate.weight
+        unwrapped = unwrapped.replace('.mlp.gate.weight.weight', '.mlp.gate.weight')
         
         # Try with model. prefix for LLM backbone weights
         if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
@@ -869,8 +888,8 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
             if 'rotary_emb.inv_freq' in kb_key:
                 skipped_buffers += 1
                 continue
-            # Skip audio positional embedding (computed locally)
-            if 'audio_tower.positional_embedding.positional_embedding' in kb_key:
+            # Skip audio positional embedding (computed locally, non-persistent buffer)
+            if 'audio_tower.positional_embedding.' in kb_key:
                 skipped_buffers += 1
                 continue
             

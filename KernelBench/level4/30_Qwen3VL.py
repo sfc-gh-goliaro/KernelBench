@@ -13,7 +13,7 @@ Qwen3VLForConditionalGeneration:
 Key differences from Qwen2-VL (13_Qwen2VL.py):
 - Vision encoder uses gelu_pytorch_tanh activation (not quick_gelu)
 - Vision encoder has nn.Embedding-based position embeddings with bilinear
-  interpolation (fast_pos_embed_interpolate)
+  interpolation (level1 InterpolatedPositionEmbedding)
 - DeepStack: intermediate vision features injected into early decoder layers
 - PatchMerger has different structure (linear_fc1/linear_fc2, postshuffle_norm)
 - Conv3d patch embedding has bias=True
@@ -25,7 +25,7 @@ Key differences from Qwen2-VL (13_Qwen2VL.py):
 
 HuggingFace weight structure (Qwen3VLForConditionalGeneration):
   model.visual.patch_embed.proj.{weight,bias}             # Conv3d
-  model.visual.pos_embed.weight                            # nn.Embedding
+  model.visual.pos_embed.pos_embed.weight                   # nn.Embedding (via level1 InterpolatedPositionEmbedding)
   model.visual.blocks.{i}.norm1.{weight,bias}              # LayerNorm
   model.visual.blocks.{i}.attn.qkv.{weight,bias}          # Linear(dim, dim*3)
   model.visual.blocks.{i}.attn.proj.{weight,bias}          # Linear(dim, dim)
@@ -63,6 +63,7 @@ This model uses level1 operators from KernelBench:
 - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
 - MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
 - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
+- InterpolatedPositionEmbedding from level1/embeddings/_7_InterpolatedPositionEmbedding
 - ScaledDotProductAttention(mode="eager") from level1/attention/_2_Attention
 
 Note: Using level1 wrappers changes the state-dict key names (e.g.
@@ -87,6 +88,7 @@ from ..level1.activations._7_Swish import Model as Swish
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
 from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEmbedding
+from ..level1.embeddings._7_InterpolatedPositionEmbedding import Model as InterpolatedPositionEmbedding
 from ..level1.attention._2_Attention import ScaledDotProductAttention
 
 
@@ -277,9 +279,12 @@ class VisionEncoder(nn.Module):
             bias=True,
         )
 
-        # Learnable position embeddings with bilinear interpolation
-        self.pos_embed = nn.Embedding(num_position_embeddings, hidden_size)
-        self.num_grid_per_side = int(num_position_embeddings ** 0.5)
+        # Level1 InterpolatedPositionEmbedding for bilinear-interpolated learned pos embeds
+        self.pos_embed = InterpolatedPositionEmbedding(
+            hidden_size=hidden_size,
+            num_position_embeddings=num_position_embeddings,
+            spatial_merge_size=spatial_merge_size,
+        )
 
         head_dim = hidden_size // num_heads
         # Level1 VisionRotaryEmbedding for 2D spatial position embeddings
@@ -308,67 +313,6 @@ class VisionEncoder(nn.Module):
             for _ in range(len(deepstack_visual_indexes))
         ])
 
-    def fast_pos_embed_interpolate(self, grid_thw: torch.Tensor) -> torch.Tensor:
-        """Bilinear interpolation of position embeddings."""
-        grid_ts, grid_hs, grid_ws = grid_thw[:, 0], grid_thw[:, 1], grid_thw[:, 2]
-        device = self.pos_embed.weight.device
-
-        idx_list = [[] for _ in range(4)]
-        weight_list = [[] for _ in range(4)]
-
-        for t, h, w in zip(grid_ts, grid_hs, grid_ws):
-            h_idxs = torch.linspace(0, self.num_grid_per_side - 1, h)
-            w_idxs = torch.linspace(0, self.num_grid_per_side - 1, w)
-
-            h_idxs_floor = h_idxs.int()
-            w_idxs_floor = w_idxs.int()
-            h_idxs_ceil = (h_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-            w_idxs_ceil = (w_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-
-            dh = h_idxs - h_idxs_floor
-            dw = w_idxs - w_idxs_floor
-
-            base_h = h_idxs_floor * self.num_grid_per_side
-            base_h_ceil = h_idxs_ceil * self.num_grid_per_side
-
-            indices = [
-                (base_h[None].T + w_idxs_floor[None]).flatten(),
-                (base_h[None].T + w_idxs_ceil[None]).flatten(),
-                (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
-                (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
-            ]
-
-            weights = [
-                ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
-                ((1 - dh)[None].T * dw[None]).flatten(),
-                (dh[None].T * (1 - dw)[None]).flatten(),
-                (dh[None].T * dw[None]).flatten(),
-            ]
-
-            for i in range(4):
-                idx_list[i].extend(indices[i].tolist())
-                weight_list[i].extend(weights[i].tolist())
-
-        idx_tensor = torch.tensor(idx_list, dtype=torch.long, device=device)
-        weight_tensor = torch.tensor(weight_list, dtype=self.pos_embed.weight.dtype, device=device)
-        pos_embeds = self.pos_embed(idx_tensor).to(device) * weight_tensor[:, :, None]
-        patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
-
-        patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
-
-        patch_pos_embeds_permute = []
-        merge_size = self.spatial_merge_size
-        for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
-            pos_embed = pos_embed.repeat(t, 1)
-            pos_embed = (
-                pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, -1)
-                .permute(0, 1, 3, 2, 4, 5)
-                .flatten(0, 4)
-            )
-            patch_pos_embeds_permute.append(pos_embed)
-        patch_pos_embeds = torch.cat(patch_pos_embeds_permute)
-        return patch_pos_embeds
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -381,7 +325,8 @@ class VisionEncoder(nn.Module):
         """
         hidden_states = self.patch_embed(hidden_states)
 
-        pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
+        # Compute interpolated position embeddings using level1 operator
+        pos_embeds = self.pos_embed(grid_thw)
         hidden_states = hidden_states + pos_embeds
 
         seq_len, _ = hidden_states.size()

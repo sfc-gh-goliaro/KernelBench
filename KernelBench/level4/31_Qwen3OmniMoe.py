@@ -33,7 +33,7 @@ HuggingFace weight structure (Qwen3OmniMoeThinkerForConditionalGeneration):
   thinker.audio_tower.proj1.{weight,bias}
   thinker.audio_tower.proj2.{weight,bias}
   thinker.visual.patch_embed.proj.{weight,bias}
-  thinker.visual.pos_embed.weight
+  thinker.visual.pos_embed.pos_embed.weight          # nn.Embedding (via level1 InterpolatedPositionEmbedding)
   thinker.visual.blocks.{i}.norm1.{weight,bias}
   thinker.visual.blocks.{i}.attn.qkv.{weight,bias}
   thinker.visual.blocks.{i}.attn.proj.{weight,bias}
@@ -64,15 +64,19 @@ Tested against: Qwen/Qwen3-Omni-30B-A3B-Instruct
 
 This model uses level1 operators from KernelBench:
 - Linear from level1/matmul/_10_Linear
+- Conv2d from level1/convolutions/_8_Conv2d_Square
 - LayerNorm from level1/normalization/_6_LayerNorm
 - RMSNorm from level1/normalization/_4_RMSNorm
 - Embedding from level1/embeddings/_2_Embedding
+- SinusoidalPosEmbed from level1/embeddings/_3_SinusoidalPosEmbed
 - PatchEmbed3D from level1/vision/_2_PatchEmbed3D
 - GELU from level1/activations/_8_GELU
 - Swish (SiLU) from level1/activations/_7_Swish
+- Softmax from level1/activations/_5_Softmax
 - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
 - MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
 - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
+- InterpolatedPositionEmbedding from level1/embeddings/_7_InterpolatedPositionEmbedding
 - ScaledDotProductAttention(mode="eager") from level1/attention/_2_Attention
 
 Note: Using level1 wrappers changes the state-dict key names (e.g.
@@ -85,7 +89,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import numpy as np
 from typing import Optional, Dict, List, Tuple
 
 # Import level1 operators
@@ -96,9 +99,13 @@ from ..level1.embeddings._2_Embedding import Model as Embedding
 from ..level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.activations._7_Swish import Model as Swish
+from ..level1.activations._5_Softmax import Model as Softmax
+from ..level1.convolutions._8_Conv2d_Square import Model as Conv2d
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
 from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEmbedding
+from ..level1.embeddings._3_SinusoidalPosEmbed import Model as SinusoidalPosEmbed
+from ..level1.embeddings._7_InterpolatedPositionEmbedding import Model as InterpolatedPositionEmbedding
 from ..level1.attention._2_Attention import ScaledDotProductAttention
 
 
@@ -114,28 +121,6 @@ VARIANTS: Dict[str, str] = {
 # ============================================================================
 # Audio Encoder Components
 # ============================================================================
-
-class SinusoidsPositionEmbedding(nn.Module):
-    """Sinusoidal position embedding for audio encoder."""
-    def __init__(self, length: int, channels: int, max_timescale: int = 10000):
-        super().__init__()
-        self.length = length
-        self.channels = channels
-        self.max_timescale = max_timescale
-        if channels % 2 != 0:
-            raise ValueError("SinusoidsPositionEmbedding needs even channels input")
-        log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
-        inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2).float())
-        scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
-        self.register_buffer(
-            "positional_embedding",
-            torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1),
-            persistent=False,
-        )
-
-    def forward(self, seqlen: int):
-        return self.positional_embedding[:seqlen, :]
-
 
 class AudioAttention(nn.Module):
     """Multi-headed attention for audio encoder.
@@ -266,7 +251,10 @@ class AudioEncoder(nn.Module):
         self.n_window_infer = n_window_infer
         self.conv_chunksize = conv_chunksize
 
-        self.positional_embedding = SinusoidsPositionEmbedding(max_source_positions, d_model)
+        self.positional_embedding = SinusoidalPosEmbed(
+            hidden_size=d_model, max_seq_length=max_source_positions,
+            mode="concatenated",
+        )
         self.layers = nn.ModuleList([
             AudioEncoderLayer(d_model, encoder_attention_heads, encoder_ffn_dim,
                               activation_function, attention_dropout)
@@ -275,14 +263,17 @@ class AudioEncoder(nn.Module):
         self.ln_post = LayerNorm(d_model)
 
         # Conv2d downsampling
-        self.conv2d1 = nn.Conv2d(1, downsample_hidden_size, 3, 2, padding=1)
-        self.conv2d2 = nn.Conv2d(downsample_hidden_size, downsample_hidden_size, 3, 2, padding=1)
-        self.conv2d3 = nn.Conv2d(downsample_hidden_size, downsample_hidden_size, 3, 2, padding=1)
+        self.conv2d1 = Conv2d(1, downsample_hidden_size, kernel_size=3, stride=2, padding=1, bias=True)
+        self.conv2d2 = Conv2d(downsample_hidden_size, downsample_hidden_size, kernel_size=3, stride=2, padding=1, bias=True)
+        self.conv2d3 = Conv2d(downsample_hidden_size, downsample_hidden_size, kernel_size=3, stride=2, padding=1, bias=True)
         self.conv_out = Linear(
             downsample_hidden_size * ((((num_mel_bins + 1) // 2 + 1) // 2 + 1) // 2),
             d_model,
             bias=False,
         )
+
+        # GELU activation for conv layers
+        self.conv_act = GELU()
 
         # Projection MLP
         self.proj1 = Linear(d_model, d_model, bias=True)
@@ -321,16 +312,16 @@ class AudioEncoder(nn.Module):
         # Split to chunk to avoid OOM during convolution
         padded_embeds = []
         for chunk in padded_feature.split(self.conv_chunksize, dim=0):
-            padded_embed = F.gelu(self.conv2d1(chunk))
-            padded_embed = F.gelu(self.conv2d2(padded_embed))
-            padded_embed = F.gelu(self.conv2d3(padded_embed))
+            padded_embed = self.conv_act(self.conv2d1(chunk))
+            padded_embed = self.conv_act(self.conv2d2(padded_embed))
+            padded_embed = self.conv_act(self.conv2d3(padded_embed))
             padded_embeds.append(padded_embed)
         padded_embed = torch.cat(padded_embeds, dim=0)
         b, c, f, t = padded_embed.size()
         padded_embed = self.conv_out(padded_embed.permute(0, 3, 1, 2).contiguous().view(b, t, c * f))
 
         positional_embedding = (
-            self.positional_embedding.positional_embedding[:padded_embed.shape[1], :]
+            self.positional_embedding(padded_embed.shape[1])
             .unsqueeze(0)
             .to(padded_embed.dtype)
         )
@@ -538,8 +529,12 @@ class VisionEncoder(nn.Module):
             bias=True,
         )
 
-        self.pos_embed = nn.Embedding(num_position_embeddings, hidden_size)
-        self.num_grid_per_side = int(num_position_embeddings ** 0.5)
+        # Level1 InterpolatedPositionEmbedding for bilinear-interpolated learned pos embeds
+        self.pos_embed = InterpolatedPositionEmbedding(
+            hidden_size=hidden_size,
+            num_position_embeddings=num_position_embeddings,
+            spatial_merge_size=spatial_merge_size,
+        )
 
         head_dim = hidden_size // num_heads
         self.rotary_pos_emb = VisionRotaryEmbedding(head_dim // 2)
@@ -566,72 +561,14 @@ class VisionEncoder(nn.Module):
             for _ in range(len(deepstack_visual_indexes))
         ])
 
-    def fast_pos_embed_interpolate(self, grid_thw: torch.Tensor) -> torch.Tensor:
-        grid_ts, grid_hs, grid_ws = grid_thw[:, 0], grid_thw[:, 1], grid_thw[:, 2]
-        device = self.pos_embed.weight.device
-
-        idx_list = [[] for _ in range(4)]
-        weight_list = [[] for _ in range(4)]
-
-        for t, h, w in zip(grid_ts, grid_hs, grid_ws):
-            h_idxs = torch.linspace(0, self.num_grid_per_side - 1, h)
-            w_idxs = torch.linspace(0, self.num_grid_per_side - 1, w)
-
-            h_idxs_floor = h_idxs.int()
-            w_idxs_floor = w_idxs.int()
-            h_idxs_ceil = (h_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-            w_idxs_ceil = (w_idxs.int() + 1).clip(max=self.num_grid_per_side - 1)
-
-            dh = h_idxs - h_idxs_floor
-            dw = w_idxs - w_idxs_floor
-
-            base_h = h_idxs_floor * self.num_grid_per_side
-            base_h_ceil = h_idxs_ceil * self.num_grid_per_side
-
-            indices = [
-                (base_h[None].T + w_idxs_floor[None]).flatten(),
-                (base_h[None].T + w_idxs_ceil[None]).flatten(),
-                (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
-                (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
-            ]
-            weights = [
-                ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
-                ((1 - dh)[None].T * dw[None]).flatten(),
-                (dh[None].T * (1 - dw)[None]).flatten(),
-                (dh[None].T * dw[None]).flatten(),
-            ]
-
-            for i in range(4):
-                idx_list[i].extend(indices[i].tolist())
-                weight_list[i].extend(weights[i].tolist())
-
-        idx_tensor = torch.tensor(idx_list, dtype=torch.long, device=device)
-        weight_tensor = torch.tensor(weight_list, dtype=self.pos_embed.weight.dtype, device=device)
-        pos_embeds = self.pos_embed(idx_tensor).to(device) * weight_tensor[:, :, None]
-        patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
-
-        patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
-
-        patch_pos_embeds_permute = []
-        merge_size = self.spatial_merge_size
-        for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
-            pos_embed = pos_embed.repeat(t, 1)
-            pos_embed = (
-                pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, -1)
-                .permute(0, 1, 3, 2, 4, 5)
-                .flatten(0, 4)
-            )
-            patch_pos_embeds_permute.append(pos_embed)
-        patch_pos_embeds = torch.cat(patch_pos_embeds_permute)
-        return patch_pos_embeds
-
     def forward(
         self,
         hidden_states: torch.Tensor,
         grid_thw: torch.Tensor,
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         hidden_states = self.patch_embed(hidden_states)
-        pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
+        # Compute interpolated position embeddings using level1 operator
+        pos_embeds = self.pos_embed(grid_thw)
         hidden_states = hidden_states + pos_embeds
 
         seq_len, _ = hidden_states.size()
@@ -773,7 +710,8 @@ class ThinkerTextMLP(nn.Module):
 
 
 class ThinkerTextTopKRouter(nn.Module):
-    """Top-K router for MoE layers."""
+    """Top-K router for MoE layers.
+    Uses level1 Linear and Softmax operators."""
     def __init__(self, hidden_size: int, num_experts: int, num_experts_per_tok: int,
                  norm_topk_prob: bool = True):
         super().__init__()
@@ -781,13 +719,15 @@ class ThinkerTextTopKRouter(nn.Module):
         self.num_experts = num_experts
         self.norm_topk_prob = norm_topk_prob
         self.hidden_dim = hidden_size
-        self.weight = nn.Parameter(torch.zeros(num_experts, hidden_size))
+        # Named 'weight' so state_dict key stays .weight.weight matching HF .weight
+        self.weight = Linear(hidden_size, num_experts, bias=False)
+        self.softmax = Softmax(dim=-1)
 
     def forward(self, hidden_states: torch.Tensor):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)
-        router_logits = F.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_logits = self.weight(hidden_states)
+        router_logits = self.softmax(router_logits.float())
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
         if self.norm_topk_prob:
             router_top_value = router_top_value / router_top_value.sum(dim=-1, keepdim=True)
@@ -797,7 +737,8 @@ class ThinkerTextTopKRouter(nn.Module):
 
 
 class ThinkerTextExperts(nn.Module):
-    """Expert module with fused gate_up_proj and down_proj parameters."""
+    """Expert module with fused gate_up_proj and down_proj parameters.
+    Uses level1 Swish operator for SiLU activation."""
     def __init__(self, hidden_size: int, moe_intermediate_size: int,
                  num_experts: int, hidden_act: str = "silu"):
         super().__init__()
@@ -806,6 +747,7 @@ class ThinkerTextExperts(nn.Module):
         self.intermediate_dim = moe_intermediate_size
         self.gate_up_proj = nn.Parameter(torch.empty(num_experts, 2 * moe_intermediate_size, hidden_size))
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, moe_intermediate_size))
+        self.swish = Swish()
 
     def forward(
         self,
@@ -825,9 +767,9 @@ class ThinkerTextExperts(nn.Module):
                 continue
             top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
             current_state = hidden_states[token_idx]
-            gate, up = F.linear(current_state, self.gate_up_proj[expert_idx]).chunk(2, dim=-1)
-            current_hidden_states = F.silu(gate) * up
-            current_hidden_states = F.linear(current_hidden_states, self.down_proj[expert_idx])
+            gate, up = (current_state @ self.gate_up_proj[expert_idx].T).chunk(2, dim=-1)
+            current_hidden_states = self.swish(gate) * up
+            current_hidden_states = current_hidden_states @ self.down_proj[expert_idx].T
             current_hidden_states = current_hidden_states * top_k_weights[token_idx, top_k_pos, None]
             final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
 
