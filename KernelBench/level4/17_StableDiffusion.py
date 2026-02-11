@@ -761,7 +761,7 @@ class UpBlock2D(nn.Module):
 # Main Model Class: UNet2DConditionModel for SDXL
 # ============================================================================
 
-class Model(nn.Module):
+class StableDiffusionXL(nn.Module):
     """
     UNet2DConditionModel matching stabilityai/stable-diffusion-xl-base-1.0.
 
