@@ -72,7 +72,7 @@ This model uses level1 operators from KernelBench:
 - PatchEmbed3D from level1/vision/_2_PatchEmbed3D
 - GELU from level1/activations/_8_GELU
 - Swish (SiLU) from level1/activations/_7_Swish
-- Softmax from level1/activations/_5_Softmax
+- FusedMoE(expert_format="stacked_fused") from level1/moe/_3_FusedMoE
 - RotaryEmbedding from level1/embeddings/_1_RotaryEmbedding
 - MultimodalRotaryEmbedding from level1/embeddings/_5_MultimodalRotaryEmbedding
 - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
@@ -100,7 +100,6 @@ from ..level1.embeddings._2_Embedding import Model as Embedding
 from ..level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
 from ..level1.activations._8_GELU import Model as GELU
 from ..level1.activations._7_Swish import Model as Swish
-from ..level1.activations._5_Softmax import Model as Softmax
 from ..level1.convolutions._8_Conv2d_Square import Model as Conv2d
 from ..level1.embeddings._1_RotaryEmbedding import Model as RotaryEmbedding
 from ..level1.embeddings._5_MultimodalRotaryEmbedding import Model as MultimodalRotaryEmbedding
@@ -110,6 +109,7 @@ from ..level1.embeddings._7_InterpolatedPositionEmbedding import Model as Interp
 from ..level1.attention._2_Attention import ScaledDotProductAttention
 from ..level1.audio._1_MelSpectrogram import Model as MelSpectrogram
 from ..level1.audio._1_MelSpectrogram import create_mel_filterbank_slaney
+from ..level1.moe._3_FusedMoE import Model as FusedMoE
 
 
 # ============================================================================
@@ -815,88 +815,9 @@ class ThinkerTextMLP(nn.Module):
         return self.down_proj(self.swish(self.gate_proj(x)) * self.up_proj(x))
 
 
-class ThinkerTextTopKRouter(nn.Module):
-    """Top-K router for MoE layers.
-    Uses level1 Linear and Softmax operators."""
-    def __init__(self, hidden_size: int, num_experts: int, num_experts_per_tok: int,
-                 norm_topk_prob: bool = True):
-        super().__init__()
-        self.top_k = num_experts_per_tok
-        self.num_experts = num_experts
-        self.norm_topk_prob = norm_topk_prob
-        self.hidden_dim = hidden_size
-        # Named 'weight' so state_dict key stays .weight.weight matching HF .weight
-        self.weight = Linear(hidden_size, num_experts, bias=False)
-        self.softmax = Softmax(dim=-1)
 
-    def forward(self, hidden_states: torch.Tensor):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = self.weight(hidden_states)
-        router_logits = self.softmax(router_logits.float())
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
-        if self.norm_topk_prob:
-            router_top_value = router_top_value / router_top_value.sum(dim=-1, keepdim=True)
-        # Cast routing weights back to the input dtype (e.g. bfloat16) to match HF
-        router_top_value = router_top_value.to(input_dtype)
-        return router_logits, router_top_value, router_indices
-
-
-class ThinkerTextExperts(nn.Module):
-    """Expert module with fused gate_up_proj and down_proj parameters.
-    Uses level1 Swish operator for SiLU activation."""
-    def __init__(self, hidden_size: int, moe_intermediate_size: int,
-                 num_experts: int, hidden_act: str = "silu"):
-        super().__init__()
-        self.num_experts = num_experts
-        self.hidden_dim = hidden_size
-        self.intermediate_dim = moe_intermediate_size
-        self.gate_up_proj = nn.Parameter(torch.empty(num_experts, 2 * moe_intermediate_size, hidden_size))
-        self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, moe_intermediate_size))
-        self.swish = Swish()
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        final_hidden_states = torch.zeros_like(hidden_states)
-        with torch.no_grad():
-            expert_mask = F.one_hot(top_k_index, num_classes=self.num_experts)
-            expert_mask = expert_mask.permute(2, 1, 0)
-            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
-
-        for expert_idx in expert_hit:
-            expert_idx = expert_idx[0]
-            if expert_idx == self.num_experts:
-                continue
-            top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
-            current_state = hidden_states[token_idx]
-            gate, up = (current_state @ self.gate_up_proj[expert_idx].T).chunk(2, dim=-1)
-            current_hidden_states = self.swish(gate) * up
-            current_hidden_states = current_hidden_states @ self.down_proj[expert_idx].T
-            current_hidden_states = current_hidden_states * top_k_weights[token_idx, top_k_pos, None]
-            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
-
-        return final_hidden_states
-
-
-class ThinkerTextSparseMoeBlock(nn.Module):
-    """Sparse Mixture of Experts block."""
-    def __init__(self, hidden_size: int, moe_intermediate_size: int,
-                 num_experts: int, num_experts_per_tok: int,
-                 norm_topk_prob: bool = True, hidden_act: str = "silu"):
-        super().__init__()
-        self.experts = ThinkerTextExperts(hidden_size, moe_intermediate_size, num_experts, hidden_act)
-        self.gate = ThinkerTextTopKRouter(hidden_size, num_experts, num_experts_per_tok, norm_topk_prob)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states_reshaped = hidden_states.view(-1, hidden_dim)
-        _, routing_weights, selected_experts = self.gate(hidden_states_reshaped)
-        final_hidden_states = self.experts(hidden_states_reshaped, selected_experts, routing_weights)
-        return final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+# MoE components (ThinkerTextTopKRouter, ThinkerTextExperts, ThinkerTextSparseMoeBlock)
+# are now provided by level1/moe/_3_FusedMoE with expert_format="stacked_fused".
 
 
 class ThinkerTextDecoderLayer(nn.Module):
@@ -921,9 +842,13 @@ class ThinkerTextDecoderLayer(nn.Module):
             hidden_size, num_heads, num_kv_heads, head_dim, rms_norm_eps,
         )
         if use_moe:
-            self.mlp = ThinkerTextSparseMoeBlock(
-                hidden_size, moe_intermediate_size, num_experts,
-                num_experts_per_tok, norm_topk_prob,
+            self.mlp = FusedMoE(
+                hidden_size=hidden_size,
+                intermediate_size=moe_intermediate_size,
+                num_experts=num_experts,
+                top_k=num_experts_per_tok,
+                expert_format="stacked_fused",
+                norm_topk_prob=norm_topk_prob,
             )
         else:
             self.mlp = ThinkerTextMLP(hidden_size, intermediate_size)

@@ -604,8 +604,12 @@ def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
     mapping = {}  # kb_key -> hf_key
     
     for kb_key in kb_state.keys():
-        # Skip fused expert parameters - handled separately
-        if '.mlp.experts.gate_up_proj' in kb_key or '.mlp.experts.down_proj' in kb_key:
+        # Skip fused expert parameters - handled separately by _fuse_qwen3omni_expert_weights
+        # FusedMoE stores gate_up_proj and down_proj directly (not under .experts.)
+        if '.mlp.gate_up_proj' in kb_key or (
+            '.mlp.down_proj' in kb_key and
+            '.mlp.down_proj' == kb_key[kb_key.index('.mlp.down_proj'):]
+        ):
             continue
         
         unwrapped = kb_key
@@ -622,10 +626,6 @@ def _build_qwen3omni_key_mapping(hf_state, kb_state) -> dict:
         
         # Unwrap level1 Conv2d wrapper (.conv2d.weight -> .weight, .conv2d.bias -> .bias)
         unwrapped = unwrapped.replace('.conv2d.weight', '.weight').replace('.conv2d.bias', '.bias')
-        
-        # Unwrap level1 Linear wrapper for TopKRouter
-        # KB: .mlp.gate.weight.weight -> HF: .mlp.gate.weight
-        unwrapped = unwrapped.replace('.mlp.gate.weight.weight', '.mlp.gate.weight')
         
         # Try with model. prefix for LLM backbone weights
         if unwrapped.startswith(('embed_tokens.', 'layers.', 'norm.', 'rotary_emb.')):
@@ -649,14 +649,15 @@ def _fuse_qwen3omni_expert_weights(hf_state, kb_state):
                model.layers.{i}.mlp.experts.{e}.up_proj.weight    (intermediate, hidden)
                model.layers.{i}.mlp.experts.{e}.down_proj.weight  (hidden, intermediate)
     
-    KB stores: layers.{i}.mlp.experts.gate_up_proj  (num_experts, 2*intermediate, hidden)
-               layers.{i}.mlp.experts.down_proj      (num_experts, hidden, intermediate)
+    KB stores (FusedMoE with stacked_fused format):
+               layers.{i}.mlp.gate_up_proj  (num_experts, 2*intermediate, hidden)
+               layers.{i}.mlp.down_proj      (num_experts, hidden, intermediate)
     """
     fused_count = 0
     for kb_key, kb_tensor in kb_state.items():
-        if '.mlp.experts.gate_up_proj' in kb_key:
-            # Extract layer index: layers.{i}.mlp.experts.gate_up_proj
-            layer_prefix = kb_key.replace('.mlp.experts.gate_up_proj', '')
+        if '.mlp.gate_up_proj' in kb_key:
+            # Extract layer index: layers.{i}.mlp.gate_up_proj
+            layer_prefix = kb_key.replace('.mlp.gate_up_proj', '')
             num_experts = kb_tensor.shape[0]
             for e in range(num_experts):
                 gate_key = f'model.{layer_prefix}.mlp.experts.{e}.gate_proj.weight'
@@ -666,9 +667,9 @@ def _fuse_qwen3omni_expert_weights(hf_state, kb_state):
                     up_w = hf_state[up_key]      # (intermediate, hidden)
                     kb_tensor[e] = torch.cat([gate_w, up_w], dim=0)  # (2*intermediate, hidden)
             fused_count += 1
-        elif '.mlp.experts.down_proj' in kb_key and '.mlp.experts.down_proj' == kb_key[kb_key.index('.mlp.experts.down_proj'):]:
-            # Extract layer index: layers.{i}.mlp.experts.down_proj
-            layer_prefix = kb_key.replace('.mlp.experts.down_proj', '')
+        elif '.mlp.down_proj' in kb_key and '.mlp.down_proj' == kb_key[kb_key.index('.mlp.down_proj'):]:
+            # Extract layer index: layers.{i}.mlp.down_proj
+            layer_prefix = kb_key.replace('.mlp.down_proj', '')
             num_experts = kb_tensor.shape[0]
             for e in range(num_experts):
                 down_key = f'model.{layer_prefix}.mlp.experts.{e}.down_proj.weight'
@@ -875,10 +876,11 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
         missing_in_hf = []
         
         for kb_key, kb_tensor in kb_state.items():
-            # Skip fused expert parameters (handled below)
-            if '.mlp.experts.gate_up_proj' in kb_key or (
-                '.mlp.experts.down_proj' in kb_key and 
-                '.mlp.experts.down_proj' == kb_key[kb_key.index('.mlp.experts.down_proj'):]
+            # Skip fused expert parameters (handled below by _fuse_qwen3omni_expert_weights)
+            # FusedMoE stores gate_up_proj and down_proj directly (not under .experts.)
+            if '.mlp.gate_up_proj' in kb_key or (
+                '.mlp.down_proj' in kb_key and 
+                '.mlp.down_proj' == kb_key[kb_key.index('.mlp.down_proj'):]
             ):
                 continue
             # Skip vision rotary embedding (computed locally)
