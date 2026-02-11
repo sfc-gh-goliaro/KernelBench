@@ -7,16 +7,20 @@ class Model(nn.Module):
     """
     Simple model that performs Group Normalization.
     """
-    def __init__(self, num_features: int, num_groups: int):
+    def __init__(self, num_features: int, num_groups: int, eps: float = 1e-5,
+                 affine: bool = True):
         """
         Initializes the GroupNorm layer.
 
         Args:
             num_features (int): Number of features in the input tensor.
             num_groups (int): Number of groups to divide the channels into.
+            eps (float): A value added to the denominator for numerical stability.
+            affine (bool): If True, learnable affine parameters are added.
         """
         super(Model, self).__init__()
-        self.gn = nn.GroupNorm(num_groups=num_groups, num_channels=num_features)
+        self.gn = nn.GroupNorm(num_groups=num_groups, num_channels=num_features,
+                               eps=eps, affine=affine)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
