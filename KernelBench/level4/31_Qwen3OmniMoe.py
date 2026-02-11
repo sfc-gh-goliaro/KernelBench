@@ -78,6 +78,7 @@ This model uses level1 operators from KernelBench:
 - VisionRotaryEmbedding from level1/embeddings/_6_VisionRotaryEmbedding
 - InterpolatedPositionEmbedding from level1/embeddings/_7_InterpolatedPositionEmbedding
 - ScaledDotProductAttention(mode="eager") from level1/attention/_2_Attention
+- MelSpectrogram from level1/audio/_1_MelSpectrogram (in Qwen3OmniFeatureExtractor)
 
 Note: Using level1 wrappers changes the state-dict key names (e.g.
 LayerNorm adds ".ln.", Embedding adds ".embedding."). The weight-copying
@@ -107,6 +108,111 @@ from ..level1.embeddings._6_VisionRotaryEmbedding import Model as VisionRotaryEm
 from ..level1.embeddings._3_SinusoidalPosEmbed import Model as SinusoidalPosEmbed
 from ..level1.embeddings._7_InterpolatedPositionEmbedding import Model as InterpolatedPositionEmbedding
 from ..level1.attention._2_Attention import ScaledDotProductAttention
+from ..level1.audio._1_MelSpectrogram import Model as MelSpectrogram
+from ..level1.audio._1_MelSpectrogram import create_mel_filterbank_slaney
+
+
+# ============================================================================
+# Audio Feature Extraction (preprocessing on GPU)
+# ============================================================================
+
+# Whisper-compatible audio hyper-parameters (used by Qwen3-Omni audio encoder)
+AUDIO_SAMPLE_RATE = 16000
+AUDIO_N_FFT = 400
+AUDIO_HOP_LENGTH = 160
+AUDIO_CHUNK_LENGTH = 30  # seconds
+AUDIO_N_SAMPLES = AUDIO_CHUNK_LENGTH * AUDIO_SAMPLE_RATE  # 480000
+
+
+class Qwen3OmniFeatureExtractor(nn.Module):
+    """
+    GPU-based audio feature extractor for Qwen3-Omni.
+
+    Converts raw audio waveforms to log-mel spectrogram features that match
+    the HuggingFace WhisperFeatureExtractor used by Qwen3-Omni.
+
+    Uses level1 operators from KernelBench:
+    - MelSpectrogram from level1/audio/_1_MelSpectrogram (with Slaney mel filters)
+
+    Pipeline:
+        1. Pad or trim waveform to 30 seconds (480000 samples)
+        2. Compute STFT -> power spectrogram -> mel filterbank (via MelSpectrogram)
+        3. Truncate last STFT frame (Whisper convention)
+        4. log10 -> clamp(max - 8.0) -> (x + 4.0) / 4.0
+
+    Shapes:
+        Input:  (batch, samples) raw audio waveform at 16 kHz
+        Output: (batch, n_mels, 3000) log-mel spectrogram features
+    """
+
+    def __init__(self, n_mels: int = 128, n_fft: int = AUDIO_N_FFT,
+                 hop_length: int = AUDIO_HOP_LENGTH, sample_rate: int = AUDIO_SAMPLE_RATE,
+                 chunk_length: int = AUDIO_CHUNK_LENGTH):
+        super().__init__()
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.sample_rate = sample_rate
+        self.chunk_length = chunk_length
+        self.n_samples = chunk_length * sample_rate
+
+        # Build Slaney-normalized mel filterbank matching HuggingFace/librosa
+        num_freq_bins = 1 + n_fft // 2  # 201
+        mel_filters_np = create_mel_filterbank_slaney(
+            num_frequency_bins=num_freq_bins,
+            num_mel_filters=n_mels,
+            min_frequency=0.0,
+            max_frequency=8000.0,
+            sampling_rate=sample_rate,
+        )
+
+        # Use level1 MelSpectrogram with pre-computed Slaney filters and log10 mode
+        self.mel_spectrogram = MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            n_mels=n_mels,
+            f_min=0.0,
+            f_max=8000.0,
+            mel_scale="slaney",
+            log_mel="log10",
+            mel_filters_np=mel_filters_np,
+        )
+
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        """
+        Extract log-mel spectrogram features from raw audio.
+
+        Args:
+            waveform: (batch, samples) raw audio at 16 kHz, float32
+
+        Returns:
+            (batch, n_mels, 3000) log-mel spectrogram features
+        """
+        waveform = waveform.float()
+
+        # 1. Pad or trim to exactly n_samples (30s = 480000 samples)
+        if waveform.shape[-1] > self.n_samples:
+            waveform = waveform[..., :self.n_samples]
+        elif waveform.shape[-1] < self.n_samples:
+            pad_len = self.n_samples - waveform.shape[-1]
+            waveform = F.pad(waveform, (0, pad_len))
+
+        # 2. Compute log10 mel spectrogram via level1 MelSpectrogram
+        log_mel = self.mel_spectrogram(waveform)
+
+        # 3. Truncate last STFT frame (Whisper convention)
+        log_mel = log_mel[..., :-1]
+
+        # 4. Whisper normalization: clamp to max - 8.0, then scale
+        if waveform.dim() == 2:
+            max_val = log_mel.amax(dim=(-2, -1), keepdim=True)
+        else:
+            max_val = log_mel.max()
+        log_mel = torch.maximum(log_mel, max_val - 8.0)
+        log_mel = (log_mel + 4.0) / 4.0
+
+        return log_mel
 
 
 # ============================================================================
@@ -938,6 +1044,9 @@ class Model(nn.Module):
         self.mrope_section = mrope_section
         self.deepstack_visual_indexes = deepstack_visual_indexes
 
+        # Audio feature extractor (raw waveform -> log-mel spectrogram on GPU)
+        self.feature_extractor = Qwen3OmniFeatureExtractor(n_mels=audio_num_mel_bins)
+
         # Audio encoder
         self.audio_tower = AudioEncoder(
             num_mel_bins=audio_num_mel_bins,
@@ -1417,3 +1526,77 @@ class Model(nn.Module):
             generated.append(next_token)
 
         return torch.cat(generated, dim=1)
+
+    def forward_from_audio(
+        self,
+        input_ids: torch.LongTensor,
+        waveform: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        use_cache: bool = False,
+        # Vision inputs (pass-through)
+        pixel_values: Optional[torch.Tensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        pixel_values_videos: Optional[torch.Tensor] = None,
+        video_grid_thw: Optional[torch.LongTensor] = None,
+    ) -> torch.Tensor:
+        """
+        End-to-end forward pass from raw audio waveform.
+
+        Uses the built-in Qwen3OmniFeatureExtractor (level1/audio/_1_MelSpectrogram)
+        to convert raw audio to log-mel spectrogram features before running the
+        full model forward pass.
+
+        Automatically computes the feature_attention_mask from the waveform length
+        to mark which mel frames correspond to real audio vs zero-padding.
+
+        Args:
+            input_ids: (batch, seq_len) token IDs
+            waveform: (batch, samples) raw audio at 16 kHz, float32
+            attention_mask: optional attention mask for text
+            position_ids: optional position IDs
+            use_cache: if True, use KV caches
+            pixel_values, image_grid_thw, etc.: optional vision inputs
+
+        Returns:
+            logits: (batch, seq_len, vocab_size)
+        """
+        # Feature extraction runs in float32; cast to model dtype for encoder
+        input_features = self.feature_extractor(waveform)
+        input_features = input_features.to(
+            dtype=self.audio_tower.conv2d1.conv2d.weight.dtype
+        )
+
+        # Compute feature_attention_mask from waveform length.
+        # The feature extractor pads to n_samples (30s = 480000 samples),
+        # producing 3000 mel frames. We mark only the frames corresponding
+        # to actual audio as valid.
+        batch_size = waveform.shape[0]
+        n_samples = self.feature_extractor.n_samples
+        hop_length = self.feature_extractor.hop_length
+        total_frames = n_samples // hop_length  # 3000
+        # Number of valid frames per sample (before padding)
+        actual_samples = torch.clamp(
+            torch.tensor([waveform.shape[-1]], device=waveform.device).expand(batch_size),
+            max=n_samples,
+        )
+        valid_frames = (actual_samples.float() / hop_length).ceil().long()
+        valid_frames = torch.clamp(valid_frames, max=total_frames)
+
+        feature_attention_mask = torch.arange(
+            total_frames, device=waveform.device
+        ).unsqueeze(0).expand(batch_size, -1) < valid_frames.unsqueeze(1)
+        feature_attention_mask = feature_attention_mask.long()
+
+        return self.forward(
+            input_ids,
+            input_features=input_features,
+            feature_attention_mask=feature_attention_mask,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            use_cache=use_cache,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+            pixel_values_videos=pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+        )

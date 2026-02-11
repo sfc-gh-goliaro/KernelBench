@@ -57,6 +57,7 @@ from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from transformers import Qwen3VLForConditionalGeneration
 from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
 import json
+import math
 import re
 import requests
 from io import BytesIO
@@ -890,6 +891,11 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
                 continue
             # Skip audio positional embedding (computed locally, non-persistent buffer)
             if 'audio_tower.positional_embedding.' in kb_key:
+                skipped_buffers += 1
+                continue
+            # Skip feature_extractor buffers (mel filterbank, hann window) —
+            # these are computed locally by KB's Qwen3OmniFeatureExtractor
+            if kb_key.startswith('feature_extractor.'):
                 skipped_buffers += 1
                 continue
             
@@ -2184,6 +2190,9 @@ def test_prefill_alignment(loaded_models):
             assert max_ok, f"Max relative diff {max_rel_diff:.2e} exceeds tolerance {rtol_max}"
         
         # Test 2: Audio + text (audio questions)
+        # HF path: uses WhisperFeatureExtractor (official feature extractor via processor)
+        # KB path: uses KB's built-in Qwen3OmniFeatureExtractor (level1 MelSpectrogram)
+        # Both run STFT on GPU in float32 for bit-identical mel spectrograms.
         import io
         import soundfile as sf
         import librosa
@@ -2218,6 +2227,7 @@ def test_prefill_alignment(loaded_models):
             text = qwen3omni_processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
             )
+            # Process text through processor (for tokenization + chat template)
             inputs = qwen3omni_processor(
                 text=[text],
                 audio=[audio_array],
@@ -2229,29 +2239,44 @@ def test_prefill_alignment(loaded_models):
             attention_mask = inputs.get("attention_mask", None)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(device=DEVICE)
-            input_features = inputs.get("input_features", None)
-            if input_features is not None:
-                input_features = input_features.to(device=DEVICE, dtype=DTYPE)
-            feature_attention_mask = inputs.get("feature_attention_mask", None)
-            if feature_attention_mask is not None:
-                feature_attention_mask = feature_attention_mask.to(device=DEVICE)
+            
+            # HF path: process audio with the official Whisper feature extractor
+            # Use device=DEVICE so both HF and KB run their STFT on the same
+            # device (GPU), avoiding CPU-vs-GPU numerical differences.
+            hf_fe_out = qwen3omni_processor.feature_extractor(
+                audio_array, sampling_rate=sampling_rate, return_tensors="pt",
+                device=DEVICE,
+            )
+            input_features_hf = hf_fe_out.input_features.to(device=DEVICE, dtype=DTYPE)
+            # Compute feature_attention_mask for the 30s-padded mel spectrogram
+            # (the direct feature_extractor call pads to 3000 frames)
+            n_frames = input_features_hf.shape[-1]  # 3000
+            hop_length = qwen3omni_processor.feature_extractor.hop_length
+            valid_frames = min(int(math.ceil(len(audio_array) / hop_length)), n_frames)
+            feature_attention_mask = torch.zeros(1, n_frames, dtype=torch.long, device=DEVICE)
+            feature_attention_mask[0, :valid_frames] = 1
+            
+            # KB path: pass raw audio waveform — KB's Qwen3OmniFeatureExtractor
+            # (built on level1/audio/_1_MelSpectrogram) handles preprocessing
+            audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).to(device=DEVICE)
             
             with torch.no_grad():
-                # HuggingFace forward
+                # HuggingFace forward (uses HF-preprocessed mel features on GPU)
                 hf_out = hf_model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
-                    input_features=input_features,
+                    input_features=input_features_hf,
                     feature_attention_mask=feature_attention_mask,
                     use_cache=False,
                 )
                 hf_logits = hf_out.logits
                 
-                # KernelBench forward
-                kb_logits = kb_model(
+                # KernelBench forward (uses KB's own feature extractor from raw audio)
+                # forward_from_audio computes its own feature_attention_mask
+                # from the waveform length
+                kb_logits = kb_model.forward_from_audio(
                     input_ids=input_ids,
-                    input_features=input_features,
-                    feature_attention_mask=feature_attention_mask,
+                    waveform=audio_tensor,
                     attention_mask=attention_mask,
                 )
             
