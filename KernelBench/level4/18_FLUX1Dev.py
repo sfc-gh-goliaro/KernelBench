@@ -21,7 +21,7 @@ Key differences from SD3.5 (MMDiT):
 - Dual-stream blocks (joint img+txt attention) + single-stream blocks
 - FluxAttention: RMSNorm on Q/K, RoPE applied before attention
 - GELU(approximate='tanh') in FeedForward
-- AdaLayerNormZero for dual blocks, AdaLayerNormZeroSingle for single blocks
+- AdaLNZero (level1) for both dual blocks (6 chunks) and single blocks (3 chunks)
 - AdaLayerNormContinuous for final output normalization
 - Guidance embedding for guidance-distilled models
 - Latent packing: 2x2 patches packed into sequence dimension
@@ -219,33 +219,6 @@ class CombinedTimestepGuidanceTextProjEmbeddings(nn.Module):
         time_guidance_emb = timesteps_emb + guidance_emb
         pooled_projections = self.text_embedder(pooled_projection)
         return time_guidance_emb + pooled_projections
-
-
-# ============================================================================
-# AdaLayerNormZeroSingle (matches diffusers)
-# ============================================================================
-
-class AdaLayerNormZeroSingle(nn.Module):
-    """Adaptive LayerNorm for single-stream blocks.
-
-    Produces 3 chunks: shift_msa, scale_msa, gate_msa.
-    Returns (normalized_x, gate_msa).
-
-    Uses level1 LayerNorm and Linear operators.
-    """
-
-    def __init__(self, embedding_dim: int, bias: bool = True):
-        super().__init__()
-        self.silu = nn.SiLU()
-        self.linear = Linear(embedding_dim, 3 * embedding_dim, bias=bias)
-        self.norm = LayerNorm(embedding_dim, eps=1e-6, elementwise_affine=False)
-
-    def forward(self, x: torch.Tensor, emb: torch.Tensor
-                ) -> Tuple[torch.Tensor, torch.Tensor]:
-        emb = self.linear(self.silu(emb))
-        shift_msa, scale_msa, gate_msa = emb.chunk(3, dim=1)
-        x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
-        return x, gate_msa
 
 
 # ============================================================================
@@ -525,7 +498,7 @@ class FluxSingleTransformerBlock(nn.Module):
         super().__init__()
         self.mlp_hidden_dim = int(dim * mlp_ratio)
 
-        self.norm = AdaLayerNormZeroSingle(dim)
+        self.norm = AdaLNZero(dim, num_output_chunks=3)
         self.proj_mlp = Linear(dim, self.mlp_hidden_dim, bias=True)
         self.act_mlp = GELUAct(approximate='tanh')
         self.proj_out = Linear(dim + self.mlp_hidden_dim, dim, bias=True)

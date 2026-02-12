@@ -58,6 +58,7 @@ from KernelBench.level1.activations._8_GELU import Model as GELUAct
 from KernelBench.level1.attention._2_Attention import ScaledDotProductAttention
 from KernelBench.level1.regularization._1_Dropout import Model as Dropout
 from KernelBench.level1.embeddings._2_Embedding import Model as Embedding
+from KernelBench.level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
 
 
 # ============================================================================
@@ -155,26 +156,8 @@ class HunyuanVideo15RotaryPosEmbed(nn.Module):
 
 
 # ============================================================================
-# Patch Embedding
+# Patch Embedding — uses level1 PatchEmbed3D
 # ============================================================================
-
-class HunyuanVideo15PatchEmbed(nn.Module):
-    """3D patch embedding using Conv3d.
-
-    Matches HunyuanVideo15PatchEmbed from diffusers.
-    """
-
-    def __init__(self, patch_size: Union[int, Tuple[int, int, int]],
-                 in_chans: int, embed_dim: int):
-        super().__init__()
-        if isinstance(patch_size, int):
-            patch_size = (patch_size, patch_size, patch_size)
-        self.proj = nn.Conv3d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.proj(hidden_states)
-        hidden_states = hidden_states.flatten(2).transpose(1, 2)  # BCFHW -> BNC
-        return hidden_states
 
 
 # ============================================================================
@@ -523,9 +506,10 @@ class _GELULinear(nn.Module):
     def __init__(self, dim_in: int, dim_out: int):
         super().__init__()
         self.proj = Linear(dim_in, dim_out, bias=True)
+        self.gelu = GELUAct(approximate='tanh')
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.gelu(self.proj(x), approximate="tanh")
+        return self.gelu(self.proj(x))
 
 
 class _LinearSiLU(nn.Module):
@@ -616,12 +600,13 @@ class HunyuanVideo15TransformerBlock(nn.Module):
 
         self.attn_heads = num_attention_heads
         self.attn_head_dim = attention_head_dim
+        self.sdpa = ScaledDotProductAttention(mode="sdpa")
 
         # FFN for latent and context
-        self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.ff = FeedForward(hidden_size, mult=mlp_ratio)
 
-        self.norm2_context = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm2_context = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.ff_context = FeedForward(hidden_size, mult=mlp_ratio)
 
     def forward(
@@ -695,8 +680,8 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
 
-        attn_output = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask_2d, dropout_p=0.0, is_causal=False
+        attn_output = self.sdpa(
+            query, key, value, attn_mask=attention_mask_2d
         )
         attn_output = attn_output.transpose(1, 2).flatten(2, 3)
         attn_output = attn_output.to(query.dtype)
@@ -809,8 +794,9 @@ class HunyuanVideo15Transformer(nn.Module):
         self.patch_size_t = patch_size_t
 
         # 1. Latent and condition embedders
-        self.x_embedder = HunyuanVideo15PatchEmbed(
-            (patch_size_t, patch_size, patch_size), in_channels, inner_dim
+        self.x_embedder = PatchEmbed3D(
+            patch_size=patch_size, temporal_patch_size=patch_size_t,
+            in_channels=in_channels, embed_dim=inner_dim,
         )
         self.image_embedder = HunyuanVideo15ImageProjection(image_embed_dim, inner_dim)
 

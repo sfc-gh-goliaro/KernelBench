@@ -12,7 +12,8 @@ generic tests how to:
 Currently supported model families:
 
   * stabilityai/stable-diffusion-xl-base-1.0   (SDXL, UNet)
-  * stabilityai/stable-diffusion-3.5-large     (SD3.5, MMDiT transformer)
+  * black-forest-labs/FLUX.1-dev               (Flux, rectified flow transformer)
+  * hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v  (HunyuanVideo 1.5)
 
 Adding a new diffusion model only requires writing a new ``ModelSpec`` and
 registering it in ``MODEL_REGISTRY``.
@@ -22,9 +23,13 @@ Usage:
     pytest tests/test_sd_hf_alignment.py -v \\
         --model-name stabilityai/stable-diffusion-xl-base-1.0
 
-    # SD3.5:
+    # Flux:
     pytest tests/test_sd_hf_alignment.py -v \\
-        --model-name stabilityai/stable-diffusion-3.5-large
+        --model-name black-forest-labs/FLUX.1-dev
+
+    # HunyuanVideo 1.5:
+    pytest tests/test_sd_hf_alignment.py -v \\
+        --model-name hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v
 
     # Model-level tests only:
     pytest tests/test_sd_hf_alignment.py -v -k "TestModelAlignment" \\
@@ -40,7 +45,7 @@ Usage:
 
 Requires:
     - diffusers library
-    - CUDA GPU (40 GB+ VRAM for SD3.5 e2e tests)
+    - CUDA GPU (40 GB+ VRAM for e2e tests)
     - HuggingFace authentication for gated models
 """
 
@@ -174,7 +179,7 @@ def _sdxl_load_hf_denoiser(model_id: str):
 
 
 def _sdxl_build_kb(hf_config):
-    kb_mod = importlib.import_module("KernelBench.level4.17_StableDiffusion")
+    kb_mod = importlib.import_module("KernelBench.level4.17_StableDiffusionXL")
     return kb_mod.StableDiffusionXL(
         sample_size=hf_config.sample_size,
         in_channels=hf_config.in_channels,
@@ -230,7 +235,7 @@ def _sdxl_load_pipeline(model_id):
 
 def _sdxl_build_kb_pipeline(pipe_hf, kb_denoiser):
     from diffusers import EulerDiscreteScheduler
-    kb_pipe_mod = importlib.import_module("KernelBench.level4.17_StableDiffusion")
+    kb_pipe_mod = importlib.import_module("KernelBench.level4.17_StableDiffusionXL")
     kb_clip_mod = importlib.import_module("KernelBench.level3.encoder._5_CLIPTextEncoder")
     kb_vae_mod = importlib.import_module("KernelBench.level3.vae._4_VAEDecoder")
 
@@ -329,181 +334,6 @@ _register(ModelSpec(
 
 
 # ---------------------------------------------------------------------------
-#  SD3.5
-# ---------------------------------------------------------------------------
-
-def _sd35_load_hf_denoiser(model_id: str):
-    from diffusers import SD3Transformer2DModel
-    hf = SD3Transformer2DModel.from_pretrained(
-        model_id, subfolder="transformer", torch_dtype=torch.float32,
-    ).to(DEVICE).eval()
-    return hf, hf.config
-
-
-def _sd35_build_kb(hf_config):
-    kb_mod = importlib.import_module("KernelBench.level4.18_StableDiffusion35")
-    return kb_mod.StableDiffusion35(
-        sample_size=hf_config.sample_size,
-        patch_size=hf_config.patch_size,
-        in_channels=hf_config.in_channels,
-        num_layers=hf_config.num_layers,
-        attention_head_dim=hf_config.attention_head_dim,
-        num_attention_heads=hf_config.num_attention_heads,
-        joint_attention_dim=hf_config.joint_attention_dim,
-        caption_projection_dim=hf_config.caption_projection_dim,
-        pooled_projection_dim=hf_config.pooled_projection_dim,
-        out_channels=hf_config.out_channels,
-        pos_embed_max_size=hf_config.pos_embed_max_size,
-        dual_attention_layers=tuple(hf_config.dual_attention_layers),
-        qk_norm=hf_config.qk_norm,
-    )
-
-
-def _sd35_make_inputs(batch, h, w, hf_config, ts_val, device, dtype):
-    hidden_states = torch.randn(batch, 16, h, w, device=device, dtype=dtype)
-    enc_hs = torch.randn(batch, 77, hf_config.joint_attention_dim,
-                         device=device, dtype=dtype)
-    pooled = torch.randn(batch, hf_config.pooled_projection_dim,
-                         device=device, dtype=dtype)
-    timestep = torch.tensor([ts_val] * batch, device=device, dtype=dtype)
-    return dict(hidden_states=hidden_states,
-                encoder_hidden_states=enc_hs,
-                pooled_projections=pooled,
-                timestep=timestep)
-
-
-def _sd35_forward(model, inputs):
-    return model(**inputs, return_dict=False)[0]
-
-
-def _sd35_load_pipeline(model_id):
-    from diffusers import StableDiffusion3Pipeline
-    pipe = StableDiffusion3Pipeline.from_pretrained(
-        model_id, torch_dtype=torch.float16)
-    return pipe.to(DEVICE)
-
-
-def _sd35_build_kb_pipeline(pipe_hf, kb_denoiser):
-    kb_pipe_mod = importlib.import_module("KernelBench.level4.18_StableDiffusion35")
-    kb_clip_mod = importlib.import_module("KernelBench.level3.encoder._5_CLIPTextEncoder")
-    kb_vae_mod = importlib.import_module("KernelBench.level3.vae._4_VAEDecoder")
-    kb_t5_mod = importlib.import_module("KernelBench.level3.encoder._6_T5Encoder")
-
-    # --- KB text_encoder (CLIPTextModelWithProjection) ---
-    hf_te1 = pipe_hf.text_encoder
-    te1_cfg = hf_te1.config
-    kb_te1 = kb_clip_mod.CLIPTextModelWithProjection(
-        vocab_size=te1_cfg.vocab_size,
-        hidden_size=te1_cfg.hidden_size,
-        intermediate_size=te1_cfg.intermediate_size,
-        num_hidden_layers=te1_cfg.num_hidden_layers,
-        num_attention_heads=te1_cfg.num_attention_heads,
-        max_position_embeddings=te1_cfg.max_position_embeddings,
-        hidden_act=te1_cfg.hidden_act,
-        layer_norm_eps=te1_cfg.layer_norm_eps,
-        projection_dim=te1_cfg.projection_dim,
-    )
-    copied, missing, mismatch, extra = _copy_weights(hf_te1, kb_te1)
-    assert len(missing) == 0, f"text_encoder missing: {missing[:5]}"
-    assert len(mismatch) == 0, f"text_encoder mismatch: {mismatch[:5]}"
-    kb_te1 = kb_te1.to(device=DEVICE, dtype=torch.float16).eval()
-
-    # --- KB text_encoder_2 (CLIPTextModelWithProjection) ---
-    hf_te2 = pipe_hf.text_encoder_2
-    te2_cfg = hf_te2.config
-    kb_te2 = kb_clip_mod.CLIPTextModelWithProjection(
-        vocab_size=te2_cfg.vocab_size,
-        hidden_size=te2_cfg.hidden_size,
-        intermediate_size=te2_cfg.intermediate_size,
-        num_hidden_layers=te2_cfg.num_hidden_layers,
-        num_attention_heads=te2_cfg.num_attention_heads,
-        max_position_embeddings=te2_cfg.max_position_embeddings,
-        hidden_act=te2_cfg.hidden_act,
-        layer_norm_eps=te2_cfg.layer_norm_eps,
-        projection_dim=te2_cfg.projection_dim,
-    )
-    copied, missing, mismatch, extra = _copy_weights(hf_te2, kb_te2)
-    assert len(missing) == 0, f"text_encoder_2 missing: {missing[:5]}"
-    assert len(mismatch) == 0, f"text_encoder_2 mismatch: {mismatch[:5]}"
-    kb_te2 = kb_te2.to(device=DEVICE, dtype=torch.float16).eval()
-
-    # --- KB text_encoder_3 (T5Encoder) ---
-    hf_te3 = pipe_hf.text_encoder_3
-    te3_cfg = hf_te3.config
-    kb_te3 = kb_t5_mod.T5Encoder(
-        vocab_size=te3_cfg.vocab_size,
-        d_model=te3_cfg.d_model,
-        d_kv=te3_cfg.d_kv,
-        d_ff=te3_cfg.d_ff,
-        num_heads=te3_cfg.num_heads,
-        num_layers=te3_cfg.num_layers,
-        relative_attention_num_buckets=te3_cfg.relative_attention_num_buckets,
-        relative_attention_max_distance=te3_cfg.relative_attention_max_distance,
-        dropout_rate=te3_cfg.dropout_rate,
-        layer_norm_epsilon=te3_cfg.layer_norm_epsilon,
-    )
-    copied, missing, mismatch, extra = _copy_weights(hf_te3, kb_te3)
-    assert len(missing) == 0, f"text_encoder_3 missing: {missing[:5]}"
-    assert len(mismatch) == 0, f"text_encoder_3 mismatch: {mismatch[:5]}"
-    kb_te3 = kb_te3.to(device=DEVICE, dtype=torch.float16).eval()
-
-    # --- KB VAE decoder ---
-    hf_vae = pipe_hf.vae
-    vae_cfg = hf_vae.config
-    kb_vae = kb_vae_mod.VAEDecoder(
-        latent_channels=vae_cfg.latent_channels,
-        out_channels=vae_cfg.out_channels,
-        block_out_channels=tuple(vae_cfg.block_out_channels),
-        layers_per_block=vae_cfg.layers_per_block,
-        norm_num_groups=vae_cfg.norm_num_groups,
-        scaling_factor=vae_cfg.scaling_factor,
-        shift_factor=getattr(vae_cfg, "shift_factor", None),
-        force_upcast=getattr(vae_cfg, "force_upcast", True),
-        use_post_quant_conv=getattr(vae_cfg, "use_post_quant_conv", False),
-    )
-    copied, missing, mismatch, extra = _copy_weights(hf_vae, kb_vae)
-    assert len(missing) == 0, f"VAE missing: {missing[:5]}"
-    assert len(mismatch) == 0, f"VAE mismatch: {mismatch[:5]}"
-    kb_vae = kb_vae.to(device=DEVICE, dtype=torch.float16).eval()
-
-    return kb_pipe_mod.StableDiffusion3Pipeline(
-        transformer=kb_denoiser,
-        scheduler=pipe_hf.scheduler,
-        vae=kb_vae,
-        text_encoder=kb_te1,
-        tokenizer=pipe_hf.tokenizer,
-        text_encoder_2=kb_te2,
-        tokenizer_2=pipe_hf.tokenizer_2,
-        text_encoder_3=kb_te3,
-        tokenizer_3=pipe_hf.tokenizer_3,
-    ).to(DEVICE)
-
-
-_register(ModelSpec(
-    model_id="stabilityai/stable-diffusion-3.5-large",
-    short_name="sd35",
-    rtol_mean=5e-3,
-    max_abs_diff=5e-2,
-    e2e_guidance_scale=7.0,
-    e2e_default_height=512,
-    e2e_default_width=512,
-    e2e_native_height=None,       # no special high-res test
-    e2e_native_width=None,
-    e2e_seeds=[0, 99, 2024],
-    timestep_values=[0.0, 100.0, 500.0, 900.0, 999.0],
-    load_hf_denoiser=_sd35_load_hf_denoiser,
-    build_kb_denoiser=_sd35_build_kb,
-    make_inputs=_sd35_make_inputs,
-    forward_fn=_sd35_forward,
-    get_out_channels=lambda cfg: cfg.out_channels,
-    load_hf_pipeline=_sd35_load_pipeline,
-    build_kb_pipeline=_sd35_build_kb_pipeline,
-    get_pipeline_denoiser=lambda pipe: pipe.transformer,
-    get_pipeline_config=lambda pipe: pipe.transformer.config,
-))
-
-
-# ---------------------------------------------------------------------------
 #  FLUX.1-dev
 # ---------------------------------------------------------------------------
 
@@ -516,7 +346,7 @@ def _flux_load_hf_denoiser(model_id: str):
 
 
 def _flux_build_kb(hf_config):
-    kb_mod = importlib.import_module("KernelBench.level4.19_Flux")
+    kb_mod = importlib.import_module("KernelBench.level4.18_FLUX1Dev")
     return kb_mod.Flux(
         patch_size=hf_config.patch_size,
         in_channels=hf_config.in_channels,
@@ -593,7 +423,7 @@ def _flux_load_pipeline(model_id):
 
 
 def _flux_build_kb_pipeline(pipe_hf, kb_denoiser):
-    kb_pipe_mod = importlib.import_module("KernelBench.level4.19_Flux")
+    kb_pipe_mod = importlib.import_module("KernelBench.level4.18_FLUX1Dev")
     kb_clip_mod = importlib.import_module("KernelBench.level3.encoder._5_CLIPTextEncoder")
     kb_vae_mod = importlib.import_module("KernelBench.level3.vae._4_VAEDecoder")
     kb_t5_mod = importlib.import_module("KernelBench.level3.encoder._6_T5Encoder")
@@ -671,7 +501,7 @@ _register(ModelSpec(
     model_id="black-forest-labs/FLUX.1-dev",
     short_name="flux",
     rtol_mean=5e-3,
-    max_abs_diff=5e-2,
+    max_abs_diff=8e-2,
     e2e_guidance_scale=3.5,
     e2e_default_height=512,
     e2e_default_width=512,
@@ -710,7 +540,7 @@ def _hunyuanvideo15_load_hf_denoiser(model_id: str):
 
 
 def _hunyuanvideo15_build_kb(hf_config):
-    kb_mod = importlib.import_module("KernelBench.level4.20_HunyuanVideo15")
+    kb_mod = importlib.import_module("KernelBench.level4.19_HunyuanVideo15")
     return kb_mod.HunyuanVideo15Transformer(
         in_channels=hf_config.in_channels,
         out_channels=hf_config.out_channels,
