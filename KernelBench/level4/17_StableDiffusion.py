@@ -38,8 +38,13 @@ This model delegates all primitive computations to level1 operators:
 Level4 code is purely wiring — no raw computation happens here.
 """
 
+import inspect
+
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from PIL import Image
 from typing import Optional, Dict, Any, Tuple, List, Union
 
 # ============================================================================
@@ -1046,3 +1051,370 @@ class StableDiffusionXL(nn.Module):
             return {"sample": sample}
 
         return (sample,)
+
+
+# ============================================================================
+# SDXL Pipeline — full text-to-image generation
+# ============================================================================
+# Implements the same logic as diffusers StableDiffusionXLPipeline.__call__
+# but without inheriting from DiffusionPipeline.  All heavy computation
+# (text encoding, denoising, VAE decode) runs on GPU.
+#
+# External HF components used:
+#   - text_encoder / text_encoder_2  (CLIPTextModel / CLIPTextModelWithProjection)
+#   - tokenizer / tokenizer_2       (CLIPTokenizer)
+#   - vae                           (AutoencoderKL)
+#   - scheduler                     (EulerDiscreteScheduler or compatible)
+#
+# The denoiser is our own StableDiffusionXL (UNet2DConditionModel).
+# ============================================================================
+
+
+def _retrieve_timesteps(scheduler, num_inference_steps, device, timesteps=None,
+                        sigmas=None, **kwargs):
+    """Call scheduler.set_timesteps and return (timesteps, num_inference_steps)."""
+    if timesteps is not None and sigmas is not None:
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed.")
+    if timesteps is not None:
+        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+        num_inference_steps = len(timesteps)
+    elif sigmas is not None:
+        scheduler.set_timesteps(sigmas=sigmas, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+        num_inference_steps = len(timesteps)
+    else:
+        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+    return timesteps, num_inference_steps
+
+
+class _PipelineOutput:
+    """Minimal output object with ``.images`` attribute for pipeline compatibility."""
+    __slots__ = ("images",)
+
+    def __init__(self, images):
+        self.images = images
+
+
+class StableDiffusionXLPipeline:
+    """KernelBench SDXL text-to-image pipeline.
+
+    Drop-in replacement for ``diffusers.StableDiffusionXLPipeline`` with the
+    same ``__call__`` interface (subset of parameters that matter for
+    generation).  Uses our :class:`StableDiffusionXL` UNet as the denoiser.
+    """
+
+    def __init__(
+        self,
+        unet: "StableDiffusionXL",
+        scheduler,
+        vae,
+        text_encoder,
+        text_encoder_2,
+        tokenizer,
+        tokenizer_2,
+    ):
+        self.unet = unet
+        self.scheduler = scheduler
+        self.vae = vae
+        self.text_encoder = text_encoder
+        self.text_encoder_2 = text_encoder_2
+        self.tokenizer = tokenizer
+        self.tokenizer_2 = tokenizer_2
+
+        # Derived constants
+        self.vae_scale_factor = (
+            2 ** (len(self.vae.config.block_out_channels) - 1)
+            if hasattr(self.vae, "config") and hasattr(self.vae.config, "block_out_channels")
+            else 8
+        )
+        self.default_sample_size = (
+            self.unet._config.sample_size
+            if hasattr(self.unet, "_config") and hasattr(self.unet._config, "sample_size")
+            else 128
+        )
+
+    # ------------------------------------------------------------------
+    # Device helpers
+    # ------------------------------------------------------------------
+    def to(self, device):
+        self.unet = self.unet.to(device)
+        self.vae = self.vae.to(device)
+        self.text_encoder = self.text_encoder.to(device)
+        self.text_encoder_2 = self.text_encoder_2.to(device)
+        return self
+
+    @property
+    def device(self):
+        return next(self.unet.parameters()).device
+
+    @property
+    def dtype(self):
+        return next(self.unet.parameters()).dtype
+
+    # ------------------------------------------------------------------
+    # Text encoding
+    # ------------------------------------------------------------------
+    def _encode_prompt(
+        self,
+        prompt: Union[str, List[str]],
+        negative_prompt: Optional[Union[str, List[str]]] = None,
+        device=None,
+        clip_skip: Optional[int] = None,
+    ):
+        """Encode prompt with both CLIP text encoders.
+
+        Returns (prompt_embeds, negative_prompt_embeds,
+                 pooled_prompt_embeds, negative_pooled_prompt_embeds).
+        """
+        device = device or self.device
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        batch_size = len(prompt)
+
+        tokenizers = [self.tokenizer, self.tokenizer_2]
+        text_encoders = [self.text_encoder, self.text_encoder_2]
+
+        prompt_embeds_list = []
+        pooled_prompt_embeds = None
+        for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+            text_inputs = tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            text_input_ids = text_inputs.input_ids.to(device)
+            outputs = text_encoder(text_input_ids, output_hidden_states=True)
+
+            # Pooled output from the last text encoder
+            if pooled_prompt_embeds is None and outputs[0].ndim == 2:
+                pooled_prompt_embeds = outputs[0]
+
+            if clip_skip is None:
+                embeds = outputs.hidden_states[-2]
+            else:
+                embeds = outputs.hidden_states[-(clip_skip + 2)]
+            prompt_embeds_list.append(embeds)
+
+        prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
+
+        # Negative prompt
+        do_cfg = negative_prompt is not None or True  # always do CFG
+        negative_prompt = negative_prompt or ""
+        negative_prompt = [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
+        if len(negative_prompt) == 1 and batch_size > 1:
+            negative_prompt = negative_prompt * batch_size
+
+        neg_embeds_list = []
+        negative_pooled_prompt_embeds = None
+        for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+            uncond_input = tokenizer(
+                negative_prompt,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            neg_outputs = text_encoder(
+                uncond_input.input_ids.to(device), output_hidden_states=True
+            )
+            if negative_pooled_prompt_embeds is None and neg_outputs[0].ndim == 2:
+                negative_pooled_prompt_embeds = neg_outputs[0]
+            neg_embeds_list.append(neg_outputs.hidden_states[-2])
+
+        negative_prompt_embeds = torch.cat(neg_embeds_list, dim=-1)
+
+        # Cast to text_encoder_2 dtype
+        te2_dtype = self.text_encoder_2.dtype
+        prompt_embeds = prompt_embeds.to(dtype=te2_dtype, device=device)
+        negative_prompt_embeds = negative_prompt_embeds.to(dtype=te2_dtype, device=device)
+
+        return (prompt_embeds, negative_prompt_embeds,
+                pooled_prompt_embeds, negative_pooled_prompt_embeds)
+
+    # ------------------------------------------------------------------
+    # Latent preparation
+    # ------------------------------------------------------------------
+    def _prepare_latents(self, batch_size, num_channels, height, width,
+                         dtype, device, generator):
+        shape = (
+            batch_size,
+            num_channels,
+            int(height) // self.vae_scale_factor,
+            int(width) // self.vae_scale_factor,
+        )
+        latents = torch.randn(shape, generator=generator, device=device,
+                              dtype=dtype)
+        latents = latents * self.scheduler.init_noise_sigma
+        return latents
+
+    # ------------------------------------------------------------------
+    # Time IDs for SDXL micro-conditioning
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _get_add_time_ids(original_size, crops_coords_top_left, target_size,
+                          dtype):
+        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+        return torch.tensor([add_time_ids], dtype=dtype)
+
+    # ------------------------------------------------------------------
+    # VAE decode + image postprocessing
+    # ------------------------------------------------------------------
+    def _decode_latents(self, latents):
+        """Decode latents to images via VAE, handling fp16 upcasting."""
+        force_upcast = getattr(self.vae.config, "force_upcast", False)
+        needs_upcasting = (self.vae.dtype == torch.float16 and force_upcast)
+        if needs_upcasting:
+            self.vae.to(dtype=torch.float32)
+            latents = latents.to(torch.float32)
+        elif latents.dtype != self.vae.dtype:
+            latents = latents.to(self.vae.dtype)
+
+        # Un-scale latents
+        has_mean = (hasattr(self.vae.config, "latents_mean")
+                    and self.vae.config.latents_mean is not None)
+        has_std = (hasattr(self.vae.config, "latents_std")
+                   and self.vae.config.latents_std is not None)
+        if has_mean and has_std:
+            mu = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(
+                latents.device, latents.dtype)
+            sigma = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(
+                latents.device, latents.dtype)
+            latents = latents * sigma / self.vae.config.scaling_factor + mu
+        else:
+            latents = latents / self.vae.config.scaling_factor
+
+        image = self.vae.decode(latents, return_dict=False)[0]
+
+        if needs_upcasting:
+            self.vae.to(dtype=torch.float16)
+
+        return image
+
+    @staticmethod
+    def _postprocess(image: torch.Tensor) -> List[Image.Image]:
+        """Convert (B,C,H,W) float tensor in [-1,1] to list of PIL images."""
+        image = (image * 0.5 + 0.5).clamp(0, 1)
+        image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+        image = (image * 255).round().astype("uint8")
+        return [Image.fromarray(img) for img in image]
+
+    # ------------------------------------------------------------------
+    # __call__  — main generation entry point
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: Union[str, List[str]] = None,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        num_inference_steps: int = 50,
+        guidance_scale: float = 5.0,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
+        generator: Optional[torch.Generator] = None,
+        output_type: str = "pil",
+        return_dict: bool = True,
+        original_size: Optional[Tuple[int, int]] = None,
+        crops_coords_top_left: Tuple[int, int] = (0, 0),
+        target_size: Optional[Tuple[int, int]] = None,
+    ):
+        """Generate images from text prompts.
+
+        Mirrors the core interface of
+        ``diffusers.StableDiffusionXLPipeline.__call__``.
+        """
+        device = self.device
+
+        # 0. Defaults
+        height = height or self.default_sample_size * self.vae_scale_factor
+        width = width or self.default_sample_size * self.vae_scale_factor
+        original_size = original_size or (height, width)
+        target_size = target_size or (height, width)
+
+        batch_size = 1 if isinstance(prompt, str) else len(prompt)
+        do_cfg = guidance_scale > 1.0
+
+        # 1. Encode prompt
+        (prompt_embeds, negative_prompt_embeds,
+         pooled_prompt_embeds, negative_pooled_prompt_embeds
+         ) = self._encode_prompt(prompt, negative_prompt, device)
+
+        # 2. Prepare timesteps
+        timesteps, num_inference_steps = _retrieve_timesteps(
+            self.scheduler, num_inference_steps, device)
+
+        # 3. Prepare latents
+        latents = self._prepare_latents(
+            batch_size, self.unet._config.in_channels, height, width,
+            prompt_embeds.dtype, device, generator)
+
+        # 4. Prepare added time ids & embeddings
+        add_text_embeds = pooled_prompt_embeds
+        text_encoder_projection_dim = self.text_encoder_2.config.projection_dim
+        add_time_ids = self._get_add_time_ids(
+            original_size, crops_coords_top_left, target_size,
+            dtype=prompt_embeds.dtype)
+        negative_add_time_ids = add_time_ids  # same for negative
+
+        if do_cfg:
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+            add_text_embeds = torch.cat(
+                [negative_pooled_prompt_embeds, add_text_embeds])
+            add_time_ids = torch.cat([negative_add_time_ids, add_time_ids])
+
+        prompt_embeds = prompt_embeds.to(device)
+        add_text_embeds = add_text_embeds.to(device)
+        add_time_ids = add_time_ids.to(device).repeat(batch_size, 1)
+
+        # 5. Prepare extra step kwargs
+        extra_step_kwargs = {}
+        if "eta" in set(inspect.signature(self.scheduler.step).parameters.keys()):
+            extra_step_kwargs["eta"] = 0.0
+
+        # 6. Denoising loop
+        for i, t in enumerate(timesteps):
+            latent_model_input = (torch.cat([latents] * 2)
+                                  if do_cfg else latents)
+            latent_model_input = self.scheduler.scale_model_input(
+                latent_model_input, t)
+
+            added_cond_kwargs = {
+                "text_embeds": add_text_embeds,
+                "time_ids": add_time_ids,
+            }
+            noise_pred = self.unet(
+                latent_model_input, t,
+                encoder_hidden_states=prompt_embeds,
+                added_cond_kwargs=added_cond_kwargs,
+                return_dict=False,
+            )[0]
+
+            if do_cfg:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = (noise_pred_uncond
+                              + guidance_scale * (noise_pred_text - noise_pred_uncond))
+
+            latents_dtype = latents.dtype
+            latents = self.scheduler.step(
+                noise_pred, t, latents, **extra_step_kwargs,
+                return_dict=False)[0]
+            if latents.dtype != latents_dtype:
+                latents = latents.to(latents_dtype)
+
+        # 7. VAE decode
+        if output_type == "latent":
+            image = latents
+        else:
+            image = self._decode_latents(latents)
+            images = self._postprocess(image)
+
+        if output_type == "latent":
+            if not return_dict:
+                return (image,)
+            return _PipelineOutput(images=image)
+
+        if not return_dict:
+            return (images,)
+        return _PipelineOutput(images=images)

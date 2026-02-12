@@ -31,8 +31,14 @@ The forward signature matches diffusers:
 This model delegates all primitive computations to level1 operators.
 """
 
+import inspect
+import math
+
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from PIL import Image
 from typing import Optional, Dict, Any, Tuple, List, Union
 
 # ============================================================================
@@ -618,3 +624,391 @@ class StableDiffusion35(nn.Module):
 
 # Backward-compatible alias
 Model = StableDiffusion35
+
+
+# ============================================================================
+# SD3.5 Pipeline — full text-to-image generation
+# ============================================================================
+# Implements the same logic as diffusers StableDiffusion3Pipeline.__call__
+# but without inheriting from DiffusionPipeline.
+#
+# External HF components used:
+#   - text_encoder / text_encoder_2  (CLIPTextModelWithProjection)
+#   - text_encoder_3                 (T5EncoderModel)
+#   - tokenizer / tokenizer_2       (CLIPTokenizer)
+#   - tokenizer_3                   (T5TokenizerFast)
+#   - vae                           (AutoencoderKL)
+#   - scheduler                     (FlowMatchEulerDiscreteScheduler)
+#
+# The denoiser is our own StableDiffusion35 (SD3Transformer2DModel).
+# ============================================================================
+
+
+def _calculate_shift(image_seq_len, base_seq_len=256, max_seq_len=4096,
+                     base_shift=0.5, max_shift=1.15):
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    return image_seq_len * m + b
+
+
+def _retrieve_timesteps(scheduler, num_inference_steps, device,
+                        timesteps=None, sigmas=None, **kwargs):
+    """Call scheduler.set_timesteps and return (timesteps, num_inference_steps)."""
+    if timesteps is not None and sigmas is not None:
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed.")
+    if timesteps is not None:
+        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+        num_inference_steps = len(timesteps)
+    elif sigmas is not None:
+        scheduler.set_timesteps(sigmas=sigmas, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+        num_inference_steps = len(timesteps)
+    else:
+        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+    return timesteps, num_inference_steps
+
+
+class _PipelineOutput:
+    """Minimal output object with ``.images`` attribute for pipeline compatibility."""
+    __slots__ = ("images",)
+
+    def __init__(self, images):
+        self.images = images
+
+
+class StableDiffusion3Pipeline:
+    """KernelBench SD3.5 text-to-image pipeline.
+
+    Drop-in replacement for ``diffusers.StableDiffusion3Pipeline`` with the
+    same ``__call__`` interface (subset of parameters that matter for
+    generation).  Uses our :class:`StableDiffusion35` transformer as the
+    denoiser.
+    """
+
+    def __init__(
+        self,
+        transformer: "StableDiffusion35",
+        scheduler,
+        vae,
+        text_encoder,
+        text_encoder_2,
+        tokenizer,
+        tokenizer_2,
+        text_encoder_3=None,
+        tokenizer_3=None,
+    ):
+        self.transformer = transformer
+        self.scheduler = scheduler
+        self.vae = vae
+        self.text_encoder = text_encoder
+        self.text_encoder_2 = text_encoder_2
+        self.text_encoder_3 = text_encoder_3
+        self.tokenizer = tokenizer
+        self.tokenizer_2 = tokenizer_2
+        self.tokenizer_3 = tokenizer_3
+
+        # Derived constants
+        self.vae_scale_factor = (
+            2 ** (len(self.vae.config.block_out_channels) - 1)
+            if hasattr(self.vae, "config") and hasattr(self.vae.config, "block_out_channels")
+            else 8
+        )
+        self.default_sample_size = (
+            self.transformer._config.sample_size
+            if hasattr(self.transformer, "_config") and hasattr(self.transformer._config, "sample_size")
+            else 128
+        )
+        self.patch_size = (
+            self.transformer._config.patch_size
+            if hasattr(self.transformer, "_config") and hasattr(self.transformer._config, "patch_size")
+            else 2
+        )
+        self.tokenizer_max_length = (
+            self.tokenizer.model_max_length
+            if self.tokenizer is not None
+            else 77
+        )
+
+    # ------------------------------------------------------------------
+    # Device helpers
+    # ------------------------------------------------------------------
+    def to(self, device):
+        self.transformer = self.transformer.to(device)
+        self.vae = self.vae.to(device)
+        self.text_encoder = self.text_encoder.to(device)
+        self.text_encoder_2 = self.text_encoder_2.to(device)
+        if self.text_encoder_3 is not None:
+            self.text_encoder_3 = self.text_encoder_3.to(device)
+        return self
+
+    @property
+    def device(self):
+        return next(self.transformer.parameters()).device
+
+    @property
+    def dtype(self):
+        return next(self.transformer.parameters()).dtype
+
+    # ------------------------------------------------------------------
+    # CLIP text encoding
+    # ------------------------------------------------------------------
+    def _get_clip_prompt_embeds(self, prompt, device, clip_skip=None,
+                                clip_model_index=0):
+        """Encode prompt with one of the CLIP text encoders.
+
+        Returns (prompt_embeds, pooled_prompt_embeds).
+        """
+        tokenizer = [self.tokenizer, self.tokenizer_2][clip_model_index]
+        text_encoder = [self.text_encoder, self.text_encoder_2][clip_model_index]
+
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        batch_size = len(prompt)
+
+        text_inputs = tokenizer(
+            prompt,
+            padding="max_length",
+            max_length=self.tokenizer_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        text_input_ids = text_inputs.input_ids.to(device)
+        outputs = text_encoder(text_input_ids, output_hidden_states=True)
+        pooled = outputs[0]
+
+        if clip_skip is None:
+            embeds = outputs.hidden_states[-2]
+        else:
+            embeds = outputs.hidden_states[-(clip_skip + 2)]
+
+        embeds = embeds.to(dtype=self.text_encoder.dtype, device=device)
+        return embeds, pooled
+
+    # ------------------------------------------------------------------
+    # T5 text encoding
+    # ------------------------------------------------------------------
+    def _get_t5_prompt_embeds(self, prompt, max_sequence_length=256,
+                               device=None):
+        """Encode prompt with T5 text encoder."""
+        device = device or self.device
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        batch_size = len(prompt)
+
+        if self.text_encoder_3 is None:
+            return torch.zeros(
+                (batch_size, max_sequence_length,
+                 self.transformer._config.joint_attention_dim),
+                device=device, dtype=self.dtype)
+
+        text_inputs = self.tokenizer_3(
+            prompt,
+            padding="max_length",
+            max_length=max_sequence_length,
+            truncation=True,
+            add_special_tokens=True,
+            return_tensors="pt",
+        )
+        text_input_ids = text_inputs.input_ids.to(device)
+        embeds = self.text_encoder_3(text_input_ids)[0]
+        embeds = embeds.to(dtype=self.text_encoder_3.dtype, device=device)
+        return embeds
+
+    # ------------------------------------------------------------------
+    # Full prompt encoding
+    # ------------------------------------------------------------------
+    def _encode_prompt(self, prompt, negative_prompt=None, device=None,
+                       max_sequence_length=256):
+        """Encode prompt with all three text encoders.
+
+        Returns (prompt_embeds, negative_prompt_embeds,
+                 pooled_prompt_embeds, negative_pooled_prompt_embeds).
+        """
+        device = device or self.device
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        batch_size = len(prompt)
+
+        # CLIP embeddings
+        prompt_embed_1, pooled_1 = self._get_clip_prompt_embeds(
+            prompt, device, clip_model_index=0)
+        prompt_embed_2, pooled_2 = self._get_clip_prompt_embeds(
+            prompt, device, clip_model_index=1)
+        clip_prompt_embeds = torch.cat([prompt_embed_1, prompt_embed_2], dim=-1)
+
+        # T5 embeddings
+        t5_prompt_embeds = self._get_t5_prompt_embeds(
+            prompt, max_sequence_length=max_sequence_length, device=device)
+
+        # Pad CLIP to match T5 dim, then concat along sequence
+        clip_prompt_embeds = F.pad(
+            clip_prompt_embeds,
+            (0, t5_prompt_embeds.shape[-1] - clip_prompt_embeds.shape[-1]))
+        prompt_embeds = torch.cat([clip_prompt_embeds, t5_prompt_embeds], dim=-2)
+        pooled_prompt_embeds = torch.cat([pooled_1, pooled_2], dim=-1)
+
+        # Negative prompt
+        negative_prompt = negative_prompt or ""
+        negative_prompt = [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
+        if len(negative_prompt) == 1 and batch_size > 1:
+            negative_prompt = negative_prompt * batch_size
+
+        neg_embed_1, neg_pooled_1 = self._get_clip_prompt_embeds(
+            negative_prompt, device, clip_model_index=0)
+        neg_embed_2, neg_pooled_2 = self._get_clip_prompt_embeds(
+            negative_prompt, device, clip_model_index=1)
+        neg_clip = torch.cat([neg_embed_1, neg_embed_2], dim=-1)
+
+        t5_neg = self._get_t5_prompt_embeds(
+            negative_prompt, max_sequence_length=max_sequence_length,
+            device=device)
+
+        neg_clip = F.pad(neg_clip, (0, t5_neg.shape[-1] - neg_clip.shape[-1]))
+        negative_prompt_embeds = torch.cat([neg_clip, t5_neg], dim=-2)
+        negative_pooled_prompt_embeds = torch.cat(
+            [neg_pooled_1, neg_pooled_2], dim=-1)
+
+        return (prompt_embeds, negative_prompt_embeds,
+                pooled_prompt_embeds, negative_pooled_prompt_embeds)
+
+    # ------------------------------------------------------------------
+    # Latent preparation
+    # ------------------------------------------------------------------
+    def _prepare_latents(self, batch_size, num_channels, height, width,
+                         dtype, device, generator):
+        shape = (
+            batch_size,
+            num_channels,
+            int(height) // self.vae_scale_factor,
+            int(width) // self.vae_scale_factor,
+        )
+        return torch.randn(shape, generator=generator, device=device,
+                           dtype=dtype)
+
+    # ------------------------------------------------------------------
+    # VAE decode + image postprocessing
+    # ------------------------------------------------------------------
+    def _decode_latents(self, latents):
+        """Decode latents to images via VAE."""
+        latents = (latents / self.vae.config.scaling_factor
+                   + self.vae.config.shift_factor)
+        image = self.vae.decode(latents, return_dict=False)[0]
+        return image
+
+    @staticmethod
+    def _postprocess(image: torch.Tensor) -> List[Image.Image]:
+        """Convert (B,C,H,W) float tensor in [-1,1] to list of PIL images."""
+        image = (image * 0.5 + 0.5).clamp(0, 1)
+        image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+        image = (image * 255).round().astype("uint8")
+        return [Image.fromarray(img) for img in image]
+
+    # ------------------------------------------------------------------
+    # __call__  — main generation entry point
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: Union[str, List[str]] = None,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        num_inference_steps: int = 28,
+        guidance_scale: float = 7.0,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
+        generator: Optional[torch.Generator] = None,
+        output_type: str = "pil",
+        return_dict: bool = True,
+        max_sequence_length: int = 256,
+        mu: Optional[float] = None,
+    ):
+        """Generate images from text prompts.
+
+        Mirrors the core interface of
+        ``diffusers.StableDiffusion3Pipeline.__call__``.
+        """
+        device = self.device
+
+        # 0. Defaults
+        height = height or self.default_sample_size * self.vae_scale_factor
+        width = width or self.default_sample_size * self.vae_scale_factor
+
+        batch_size = 1 if isinstance(prompt, str) else len(prompt)
+        do_cfg = guidance_scale > 1.0
+
+        # 1. Encode prompt
+        (prompt_embeds, negative_prompt_embeds,
+         pooled_prompt_embeds, negative_pooled_prompt_embeds
+         ) = self._encode_prompt(prompt, negative_prompt, device,
+                                 max_sequence_length)
+
+        if do_cfg:
+            prompt_embeds = torch.cat(
+                [negative_prompt_embeds, prompt_embeds], dim=0)
+            pooled_prompt_embeds = torch.cat(
+                [negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
+
+        # 2. Prepare latents
+        num_channels = self.transformer._config.in_channels
+        latents = self._prepare_latents(
+            batch_size, num_channels, height, width,
+            prompt_embeds.dtype, device, generator)
+
+        # 3. Prepare timesteps (with dynamic shifting if configured)
+        scheduler_kwargs = {}
+        if self.scheduler.config.get("use_dynamic_shifting", None) and mu is None:
+            _, _, lat_h, lat_w = latents.shape
+            image_seq_len = ((lat_h // self.patch_size)
+                             * (lat_w // self.patch_size))
+            mu = _calculate_shift(
+                image_seq_len,
+                self.scheduler.config.get("base_image_seq_len", 256),
+                self.scheduler.config.get("max_image_seq_len", 4096),
+                self.scheduler.config.get("base_shift", 0.5),
+                self.scheduler.config.get("max_shift", 1.16),
+            )
+            scheduler_kwargs["mu"] = mu
+        elif mu is not None:
+            scheduler_kwargs["mu"] = mu
+
+        timesteps, num_inference_steps = _retrieve_timesteps(
+            self.scheduler, num_inference_steps, device, **scheduler_kwargs)
+
+        # 4. Denoising loop
+        for i, t in enumerate(timesteps):
+            latent_model_input = (torch.cat([latents] * 2)
+                                  if do_cfg else latents)
+            timestep = t.expand(latent_model_input.shape[0])
+
+            noise_pred = self.transformer(
+                hidden_states=latent_model_input,
+                timestep=timestep,
+                encoder_hidden_states=prompt_embeds,
+                pooled_projections=pooled_prompt_embeds,
+                return_dict=False,
+            )[0]
+
+            if do_cfg:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = (noise_pred_uncond
+                              + guidance_scale * (noise_pred_text - noise_pred_uncond))
+
+            latents_dtype = latents.dtype
+            latents = self.scheduler.step(
+                noise_pred, t, latents, return_dict=False)[0]
+            if latents.dtype != latents_dtype:
+                latents = latents.to(latents_dtype)
+
+        # 5. VAE decode
+        if output_type == "latent":
+            image = latents
+        else:
+            image = self._decode_latents(latents)
+            images = self._postprocess(image)
+
+        if output_type == "latent":
+            if not return_dict:
+                return (image,)
+            return _PipelineOutput(images=image)
+
+        if not return_dict:
+            return (images,)
+        return _PipelineOutput(images=images)

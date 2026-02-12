@@ -223,11 +223,73 @@ def _sdxl_load_pipeline(model_id):
 
 
 def _sdxl_build_kb_pipeline(pipe_hf, kb_denoiser):
-    from diffusers import StableDiffusionXLPipeline, EulerDiscreteScheduler
-    return StableDiffusionXLPipeline(
-        vae=pipe_hf.vae,
-        text_encoder=pipe_hf.text_encoder,
-        text_encoder_2=pipe_hf.text_encoder_2,
+    from diffusers import EulerDiscreteScheduler
+    kb_pipe_mod = importlib.import_module("KernelBench.level4.17_StableDiffusion")
+    kb_clip_mod = importlib.import_module("KernelBench.level3.encoder._5_CLIPTextEncoder")
+    kb_vae_mod = importlib.import_module("KernelBench.level3.vae._4_VAEDecoder")
+
+    # --- KB text_encoder (CLIPTextModel) ---
+    hf_te1 = pipe_hf.text_encoder
+    te1_cfg = hf_te1.config
+    kb_te1 = kb_clip_mod.CLIPTextModel(
+        vocab_size=te1_cfg.vocab_size,
+        hidden_size=te1_cfg.hidden_size,
+        intermediate_size=te1_cfg.intermediate_size,
+        num_hidden_layers=te1_cfg.num_hidden_layers,
+        num_attention_heads=te1_cfg.num_attention_heads,
+        max_position_embeddings=te1_cfg.max_position_embeddings,
+        hidden_act=te1_cfg.hidden_act,
+        layer_norm_eps=te1_cfg.layer_norm_eps,
+        projection_dim=te1_cfg.projection_dim,
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te1, kb_te1)
+    assert len(missing) == 0, f"text_encoder missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder mismatch: {mismatch[:5]}"
+    kb_te1 = kb_te1.to(device=DEVICE, dtype=torch.float16).eval()
+
+    # --- KB text_encoder_2 (CLIPTextModelWithProjection) ---
+    hf_te2 = pipe_hf.text_encoder_2
+    te2_cfg = hf_te2.config
+    kb_te2 = kb_clip_mod.CLIPTextModelWithProjection(
+        vocab_size=te2_cfg.vocab_size,
+        hidden_size=te2_cfg.hidden_size,
+        intermediate_size=te2_cfg.intermediate_size,
+        num_hidden_layers=te2_cfg.num_hidden_layers,
+        num_attention_heads=te2_cfg.num_attention_heads,
+        max_position_embeddings=te2_cfg.max_position_embeddings,
+        hidden_act=te2_cfg.hidden_act,
+        layer_norm_eps=te2_cfg.layer_norm_eps,
+        projection_dim=te2_cfg.projection_dim,
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te2, kb_te2)
+    assert len(missing) == 0, f"text_encoder_2 missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder_2 mismatch: {mismatch[:5]}"
+    kb_te2 = kb_te2.to(device=DEVICE, dtype=torch.float16).eval()
+
+    # --- KB VAE decoder ---
+    hf_vae = pipe_hf.vae
+    vae_cfg = hf_vae.config
+    kb_vae = kb_vae_mod.VAEDecoder(
+        latent_channels=vae_cfg.latent_channels,
+        out_channels=vae_cfg.out_channels,
+        block_out_channels=tuple(vae_cfg.block_out_channels),
+        layers_per_block=vae_cfg.layers_per_block,
+        norm_num_groups=vae_cfg.norm_num_groups,
+        scaling_factor=vae_cfg.scaling_factor,
+        shift_factor=getattr(vae_cfg, "shift_factor", None),
+        force_upcast=getattr(vae_cfg, "force_upcast", True),
+        use_post_quant_conv=getattr(vae_cfg, "use_post_quant_conv", True),
+    )
+    # Copy only decoder + post_quant_conv weights from full VAE
+    copied, missing, mismatch, extra = _copy_weights(hf_vae, kb_vae)
+    assert len(missing) == 0, f"VAE missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"VAE mismatch: {mismatch[:5]}"
+    kb_vae = kb_vae.to(device=DEVICE, dtype=torch.float16).eval()
+
+    return kb_pipe_mod.StableDiffusionXLPipeline(
+        vae=kb_vae,
+        text_encoder=kb_te1,
+        text_encoder_2=kb_te2,
         tokenizer=pipe_hf.tokenizer,
         tokenizer_2=pipe_hf.tokenizer_2,
         unet=kb_denoiser,
@@ -316,16 +378,97 @@ def _sd35_load_pipeline(model_id):
 
 
 def _sd35_build_kb_pipeline(pipe_hf, kb_denoiser):
-    from diffusers import StableDiffusion3Pipeline
-    return StableDiffusion3Pipeline(
+    kb_pipe_mod = importlib.import_module("KernelBench.level4.18_StableDiffusion35")
+    kb_clip_mod = importlib.import_module("KernelBench.level3.encoder._5_CLIPTextEncoder")
+    kb_vae_mod = importlib.import_module("KernelBench.level3.vae._4_VAEDecoder")
+    kb_t5_mod = importlib.import_module("KernelBench.level3.encoder._6_T5Encoder")
+
+    # --- KB text_encoder (CLIPTextModelWithProjection) ---
+    hf_te1 = pipe_hf.text_encoder
+    te1_cfg = hf_te1.config
+    kb_te1 = kb_clip_mod.CLIPTextModelWithProjection(
+        vocab_size=te1_cfg.vocab_size,
+        hidden_size=te1_cfg.hidden_size,
+        intermediate_size=te1_cfg.intermediate_size,
+        num_hidden_layers=te1_cfg.num_hidden_layers,
+        num_attention_heads=te1_cfg.num_attention_heads,
+        max_position_embeddings=te1_cfg.max_position_embeddings,
+        hidden_act=te1_cfg.hidden_act,
+        layer_norm_eps=te1_cfg.layer_norm_eps,
+        projection_dim=te1_cfg.projection_dim,
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te1, kb_te1)
+    assert len(missing) == 0, f"text_encoder missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder mismatch: {mismatch[:5]}"
+    kb_te1 = kb_te1.to(device=DEVICE, dtype=torch.float16).eval()
+
+    # --- KB text_encoder_2 (CLIPTextModelWithProjection) ---
+    hf_te2 = pipe_hf.text_encoder_2
+    te2_cfg = hf_te2.config
+    kb_te2 = kb_clip_mod.CLIPTextModelWithProjection(
+        vocab_size=te2_cfg.vocab_size,
+        hidden_size=te2_cfg.hidden_size,
+        intermediate_size=te2_cfg.intermediate_size,
+        num_hidden_layers=te2_cfg.num_hidden_layers,
+        num_attention_heads=te2_cfg.num_attention_heads,
+        max_position_embeddings=te2_cfg.max_position_embeddings,
+        hidden_act=te2_cfg.hidden_act,
+        layer_norm_eps=te2_cfg.layer_norm_eps,
+        projection_dim=te2_cfg.projection_dim,
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te2, kb_te2)
+    assert len(missing) == 0, f"text_encoder_2 missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder_2 mismatch: {mismatch[:5]}"
+    kb_te2 = kb_te2.to(device=DEVICE, dtype=torch.float16).eval()
+
+    # --- KB text_encoder_3 (T5Encoder) ---
+    hf_te3 = pipe_hf.text_encoder_3
+    te3_cfg = hf_te3.config
+    kb_te3 = kb_t5_mod.T5Encoder(
+        vocab_size=te3_cfg.vocab_size,
+        d_model=te3_cfg.d_model,
+        d_kv=te3_cfg.d_kv,
+        d_ff=te3_cfg.d_ff,
+        num_heads=te3_cfg.num_heads,
+        num_layers=te3_cfg.num_layers,
+        relative_attention_num_buckets=te3_cfg.relative_attention_num_buckets,
+        relative_attention_max_distance=te3_cfg.relative_attention_max_distance,
+        dropout_rate=te3_cfg.dropout_rate,
+        layer_norm_epsilon=te3_cfg.layer_norm_epsilon,
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te3, kb_te3)
+    assert len(missing) == 0, f"text_encoder_3 missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder_3 mismatch: {mismatch[:5]}"
+    kb_te3 = kb_te3.to(device=DEVICE, dtype=torch.float16).eval()
+
+    # --- KB VAE decoder ---
+    hf_vae = pipe_hf.vae
+    vae_cfg = hf_vae.config
+    kb_vae = kb_vae_mod.VAEDecoder(
+        latent_channels=vae_cfg.latent_channels,
+        out_channels=vae_cfg.out_channels,
+        block_out_channels=tuple(vae_cfg.block_out_channels),
+        layers_per_block=vae_cfg.layers_per_block,
+        norm_num_groups=vae_cfg.norm_num_groups,
+        scaling_factor=vae_cfg.scaling_factor,
+        shift_factor=getattr(vae_cfg, "shift_factor", None),
+        force_upcast=getattr(vae_cfg, "force_upcast", True),
+        use_post_quant_conv=getattr(vae_cfg, "use_post_quant_conv", False),
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_vae, kb_vae)
+    assert len(missing) == 0, f"VAE missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"VAE mismatch: {mismatch[:5]}"
+    kb_vae = kb_vae.to(device=DEVICE, dtype=torch.float16).eval()
+
+    return kb_pipe_mod.StableDiffusion3Pipeline(
         transformer=kb_denoiser,
         scheduler=pipe_hf.scheduler,
-        vae=pipe_hf.vae,
-        text_encoder=pipe_hf.text_encoder,
+        vae=kb_vae,
+        text_encoder=kb_te1,
         tokenizer=pipe_hf.tokenizer,
-        text_encoder_2=pipe_hf.text_encoder_2,
+        text_encoder_2=kb_te2,
         tokenizer_2=pipe_hf.tokenizer_2,
-        text_encoder_3=pipe_hf.text_encoder_3,
+        text_encoder_3=kb_te3,
         tokenizer_3=pipe_hf.tokenizer_3,
     ).to(DEVICE)
 
@@ -363,13 +506,14 @@ def _kb_key_to_hf_key(kb_key: str) -> str:
 
     KB wraps some nn modules inside level1 operators which adds an extra
     segment to the parameter path:
-      - GroupNorm  (level1) stores self.gn  -> adds ".gn."
-      - LayerNorm  (level1) stores self.ln  -> adds ".ln."
-      - Conv2d     (level1) stores self.conv2d -> adds ".conv2d."
+      - GroupNorm   (level1) stores self.gn        -> adds ".gn."
+      - LayerNorm   (level1) stores self.ln        -> adds ".ln."
+      - Conv2d      (level1) stores self.conv2d    -> adds ".conv2d."
+      - Embedding   (level1) stores self.embedding -> adds ".embedding."
 
     This function strips the wrapper segments to recover the HF key.
     """
-    for wrapper_seg in (".conv2d.", ".gn.", ".ln."):
+    for wrapper_seg in (".conv2d.", ".gn.", ".ln.", ".embedding."):
         if wrapper_seg in kb_key:
             kb_key = kb_key.replace(wrapper_seg, ".")
             break
@@ -570,7 +714,7 @@ def pipelines(spec):
           f"({sum(p.numel() for p in kb_denoiser.parameters()):,} params)")
 
     pipe_kb = spec.build_kb_pipeline(pipe_hf, kb_denoiser)
-    print("  KB pipeline assembled (shared VAE + text encoders)")
+    print("  KB pipeline assembled (KB denoiser + KB text encoders + KB VAE)")
 
     return pipe_hf, pipe_kb
 
