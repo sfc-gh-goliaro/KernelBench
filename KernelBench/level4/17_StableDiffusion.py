@@ -32,6 +32,7 @@ This model delegates all primitive computations to level1 operators:
 - level1/attention/_2_Attention          → Scaled dot-product attention
 - level1/upsampling/_2_Interpolate       → Nearest-neighbor upsampling
 - level1/regularization/_1_Dropout       → Dropout regularization
+- level1/diffusion/_3_TimestepEmbedding  → Timestep embedding MLP
 - level1/diffusion/_7_SinusoidalTimesteps → Sinusoidal timestep encoding
 
 Level4 code is purely wiring — no raw computation happens here.
@@ -51,6 +52,10 @@ from KernelBench.level1.normalization._6_LayerNorm import Model as LayerNorm
 from KernelBench.level1.matmul._10_Linear import Model as Linear
 from KernelBench.level1.convolutions._8_Conv2d_Square import Model as Conv2d
 
+# Diffusion-specific operators
+from KernelBench.level1.diffusion._3_TimestepEmbedding import Model as TimestepEmbedding
+from KernelBench.level1.diffusion._7_SinusoidalTimesteps import Model as SinusoidalTimesteps
+
 # Parameter-free operators (no weights, pure computation)
 from KernelBench.level1.activations._7_Swish import Model as Swish
 from KernelBench.level1.activations._8_GELU import Model as GELU
@@ -59,51 +64,6 @@ from KernelBench.level1.activations._18_Mish import Model as Mish
 from KernelBench.level1.attention._2_Attention import ScaledDotProductAttention
 from KernelBench.level1.upsampling._2_Interpolate import Model as Interpolate
 from KernelBench.level1.regularization._1_Dropout import Model as Dropout
-from KernelBench.level1.diffusion._7_SinusoidalTimesteps import Model as SinusoidalTimesteps
-
-
-# ============================================================================
-# Timestep Embedding (matches diffusers get_timestep_embedding + TimestepEmbedding)
-# ============================================================================
-
-class TimestepEmbedding(nn.Module):
-    """Matches diffusers TimestepEmbedding — uses Linear + Swish level1 ops."""
-    def __init__(self, in_channels: int, time_embed_dim: int, act_fn: str = "silu",
-                 out_dim: int = None, post_act_fn: str = None, cond_proj_dim: int = None):
-        super().__init__()
-        self.linear_1 = Linear(in_channels, time_embed_dim, bias=True)
-        if cond_proj_dim is not None:
-            self.cond_proj = Linear(cond_proj_dim, in_channels, bias=False)
-        else:
-            self.cond_proj = None
-
-        if act_fn == "silu":
-            self.act = Swish()
-        elif act_fn == "mish":
-            self.act = Mish()
-        elif act_fn == "gelu":
-            self.act = GELU()
-        else:
-            self.act = Swish()
-
-        time_embed_dim_out = out_dim if out_dim is not None else time_embed_dim
-        self.linear_2 = Linear(time_embed_dim, time_embed_dim_out, bias=True)
-
-        self.post_act = None
-        if post_act_fn is not None:
-            if post_act_fn == "silu":
-                self.post_act = Swish()
-
-    def forward(self, sample: torch.Tensor, condition: torch.Tensor = None) -> torch.Tensor:
-        if condition is not None:
-            sample = sample + self.cond_proj(condition)
-        sample = self.linear_1(sample)
-        if self.act is not None:
-            sample = self.act(sample)
-        sample = self.linear_2(sample)
-        if self.post_act is not None:
-            sample = self.post_act(sample)
-        return sample
 
 
 # ============================================================================

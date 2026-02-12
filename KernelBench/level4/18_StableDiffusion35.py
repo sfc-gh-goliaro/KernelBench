@@ -33,7 +33,6 @@ This model delegates all primitive computations to level1 operators.
 
 import torch
 import torch.nn as nn
-import math
 from typing import Optional, Dict, Any, Tuple, List, Union
 
 # ============================================================================
@@ -44,14 +43,19 @@ from typing import Optional, Dict, Any, Tuple, List, Union
 from KernelBench.level1.normalization._6_LayerNorm import Model as LayerNorm
 from KernelBench.level1.normalization._4_RMSNorm import Model as RMSNorm
 from KernelBench.level1.matmul._10_Linear import Model as Linear
-from KernelBench.level1.convolutions._8_Conv2d_Square import Model as Conv2d
+from KernelBench.level1.vision._1_PatchEmbed2D import Model as PatchEmbed2D
+
+# Diffusion-specific operators
+from KernelBench.level1.diffusion._1_AdaLN import Model as AdaLNContinuous
+from KernelBench.level1.diffusion._2_AdaLN_Zero import Model as AdaLNZero
+from KernelBench.level1.diffusion._3_TimestepEmbedding import Model as TimestepEmbedding
+from KernelBench.level1.diffusion._7_SinusoidalTimesteps import Model as SinusoidalTimesteps
 
 # Parameter-free operators
 from KernelBench.level1.activations._7_Swish import Model as Swish
 from KernelBench.level1.activations._8_GELU import Model as GELUAct
 from KernelBench.level1.attention._2_Attention import ScaledDotProductAttention
 from KernelBench.level1.regularization._1_Dropout import Model as Dropout
-from KernelBench.level1.diffusion._7_SinusoidalTimesteps import Model as SinusoidalTimesteps
 
 
 # ============================================================================
@@ -88,22 +92,22 @@ def _get_2d_sincos_pos_embed(embed_dim: int, grid_size: int, base_size: int = 16
 # PatchEmbed (matches diffusers PatchEmbed for SD3)
 # ============================================================================
 
-class PatchEmbed(nn.Module):
-    """2D image to patch embedding with cropped sincos positional encoding.
-    Uses Conv2d level1 op for patch projection."""
+class PatchEmbed(PatchEmbed2D):
+    """SD3 PatchEmbed = PatchEmbed2D (level1) + cropped 2D sincos positional encoding.
+
+    Inherits Conv2d + flatten + transpose from PatchEmbed2D, adds SD3-specific
+    pre-computed positional embeddings with center-crop at runtime."""
 
     def __init__(self, height: int = 128, width: int = 128, patch_size: int = 2,
                  in_channels: int = 16, embed_dim: int = 2432,
                  pos_embed_max_size: int = 192):
-        super().__init__()
-        self.patch_size = patch_size
+        super().__init__(img_size=height, patch_size=patch_size,
+                         in_channels=in_channels, embed_dim=embed_dim,
+                         flatten=True, bias=True, proj_name="proj")
         self.height = height // patch_size
         self.width = width // patch_size
         self.base_size = height // patch_size
         self.pos_embed_max_size = pos_embed_max_size
-
-        self.proj = Conv2d(in_channels, embed_dim, kernel_size=patch_size,
-                           stride=patch_size, padding=0, bias=True)
 
         # Pre-compute positional embeddings for max size
         pos_embed = _get_2d_sincos_pos_embed(embed_dim, pos_embed_max_size,
@@ -122,8 +126,7 @@ class PatchEmbed(nn.Module):
 
     def forward(self, latent: torch.Tensor) -> torch.Tensor:
         height, width = latent.shape[-2:]
-        latent = self.proj(latent)
-        latent = latent.flatten(2).transpose(1, 2)  # BCHW -> BNC
+        latent, _ = super().forward(latent)  # PatchEmbed2D: Conv2d + flatten + transpose
         pos_embed = self.cropped_pos_embed(height, width)
         return (latent + pos_embed).to(latent.dtype)
 
@@ -149,25 +152,10 @@ class TextProjection(nn.Module):
         return hidden_states
 
 
-class TimestepEmbedding(nn.Module):
-    """Matches diffusers TimestepEmbedding. Uses Linear + Swish level1 ops."""
-
-    def __init__(self, in_channels: int, time_embed_dim: int):
-        super().__init__()
-        self.linear_1 = Linear(in_channels, time_embed_dim, bias=True)
-        self.act = Swish()
-        self.linear_2 = Linear(time_embed_dim, time_embed_dim, bias=True)
-
-    def forward(self, sample: torch.Tensor) -> torch.Tensor:
-        sample = self.linear_1(sample)
-        sample = self.act(sample)
-        sample = self.linear_2(sample)
-        return sample
-
-
 class CombinedTimestepTextProjEmbeddings(nn.Module):
     """Matches diffusers CombinedTimestepTextProjEmbeddings.
-    Combines sinusoidal timestep embedding + pooled text projection."""
+    Combines sinusoidal timestep embedding + pooled text projection.
+    Uses TimestepEmbeddingOp level1 op for the MLP."""
 
     def __init__(self, embedding_dim: int, pooled_projection_dim: int):
         super().__init__()
@@ -187,44 +175,10 @@ class CombinedTimestepTextProjEmbeddings(nn.Module):
 
 
 # ============================================================================
-# Adaptive Layer Norms (matches diffusers AdaLayerNormZero, AdaLayerNormContinuous)
+# Adaptive Layer Norms — delegated to level1 operators
+# AdaLayerNormZero → AdaLNZero (level1/diffusion/_2_AdaLN_Zero)
+# AdaLayerNormContinuous → AdaLNContinuous (level1/diffusion/_1_AdaLN)
 # ============================================================================
-
-class AdaLayerNormZero(nn.Module):
-    """Matches diffusers AdaLayerNormZero.
-    Produces shift/scale/gate for MSA and MLP from timestep embedding.
-    Uses Linear, Swish, LayerNorm level1 ops."""
-
-    def __init__(self, embedding_dim: int):
-        super().__init__()
-        self.silu = Swish()
-        self.linear = Linear(embedding_dim, 6 * embedding_dim, bias=True)
-        self.norm = LayerNorm(embedding_dim, eps=1e-6, elementwise_affine=False)
-
-    def forward(self, x: torch.Tensor, emb: torch.Tensor):
-        emb = self.linear(self.silu(emb))
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.chunk(6, dim=1)
-        x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
-        return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
-
-
-class AdaLayerNormContinuous(nn.Module):
-    """Matches diffusers AdaLayerNormContinuous.
-    Adaptive layer norm with continuous conditioning.
-    Uses Linear, Swish, LayerNorm level1 ops."""
-
-    def __init__(self, embedding_dim: int, conditioning_embedding_dim: int,
-                 elementwise_affine: bool = False, eps: float = 1e-6, bias: bool = True):
-        super().__init__()
-        self.silu = Swish()
-        self.linear = Linear(conditioning_embedding_dim, embedding_dim * 2, bias=bias)
-        self.norm = LayerNorm(embedding_dim, eps=eps, elementwise_affine=elementwise_affine)
-
-    def forward(self, x: torch.Tensor, conditioning_embedding: torch.Tensor) -> torch.Tensor:
-        emb = self.linear(self.silu(conditioning_embedding).to(x.dtype))
-        scale, shift = torch.chunk(emb, 2, dim=1)
-        x = self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
-        return x
 
 
 # ============================================================================
@@ -405,15 +359,15 @@ class JointTransformerBlock(nn.Module):
         self.use_dual_attention = use_dual_attention
         self.context_pre_only = context_pre_only
 
-        # Image norm (AdaLN-Zero)
-        self.norm1 = AdaLayerNormZero(dim)
+        # Image norm (AdaLN-Zero) — level1 op with 6 output chunks
+        self.norm1 = AdaLNZero(dim, num_output_chunks=6)
 
         # Context norm
         if context_pre_only:
-            self.norm1_context = AdaLayerNormContinuous(
+            self.norm1_context = AdaLNContinuous(
                 dim, dim, elementwise_affine=False, eps=1e-6, bias=True)
         else:
-            self.norm1_context = AdaLayerNormZero(dim)
+            self.norm1_context = AdaLNZero(dim, num_output_chunks=6)
 
         # Joint attention
         self.attn = JointAttention(
@@ -568,8 +522,8 @@ class StableDiffusion35(nn.Module):
             for i in range(num_layers)
         ])
 
-        # Final output: adaptive norm + linear projection
-        self.norm_out = AdaLayerNormContinuous(
+        # Final output: adaptive norm + linear projection (level1 AdaLN op)
+        self.norm_out = AdaLNContinuous(
             self.inner_dim, self.inner_dim,
             elementwise_affine=False, eps=1e-6)
         self.proj_out = Linear(self.inner_dim,

@@ -21,3 +21,9 @@ def pytest_addoption(parser):
         help="Number of transformer layers to use (default: all layers). "
              "Use fewer layers for faster testing or to fit larger models on smaller GPUs."
     )
+    parser.addoption(
+        "--save-images",
+        action="store_true",
+        default=False,
+        help="Save generated images to tests/outputs/ for visual inspection."
+    )

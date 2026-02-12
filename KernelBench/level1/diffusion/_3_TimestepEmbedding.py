@@ -1,76 +1,98 @@
-import os
-import sys
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import math
+from typing import Optional
+
 
 class Model(nn.Module):
     """
-    Timestep Embedding
-    
-    Used by: All diffusion models
-    
-    Timestep to embedding: sinusoidal encoding + Linear + SiLU + Linear.
-    Maps scalar timesteps to dense embeddings for conditioning.
-    
+    Timestep Embedding MLP
+
+    Used by: All diffusion models (SDXL, SD-3/3.5, FLUX, DiT, PixArt)
+
+    Maps pre-computed sinusoidal timestep encodings (or any conditioning
+    vector) to dense embeddings via Linear + activation + Linear.
+
+    This is the MLP portion only — sinusoidal encoding is handled by the
+    separate SinusoidalTimesteps level1 op.
+
+    Matches diffusers TimestepEmbedding exactly.
+
+    State-dict key layout (for HuggingFace weight compatibility):
+        linear_1 — nn.Linear(in_channels, time_embed_dim)
+        act      — activation function (SiLU by default)
+        linear_2 — nn.Linear(time_embed_dim, out_dim)
+        cond_proj — optional nn.Linear(cond_proj_dim, in_channels)
+        post_act  — optional post-activation
+
     Shapes:
-        Input: (batch,) timesteps
-        Output: (batch, embed_dim)
+        Input: (batch, in_channels)
+        Output: (batch, out_dim)
     """
-    
-    def __init__(self, embed_dim: int, freq_dim: int = 256, max_period: float = 10000.0):
+
+    def __init__(self, in_channels: int, time_embed_dim: int,
+                 act_fn: str = "silu", out_dim: Optional[int] = None,
+                 post_act_fn: Optional[str] = None,
+                 cond_proj_dim: Optional[int] = None,
+                 bias: bool = True):
         """
-        Initialize timestep embedding.
-        
+        Initialize timestep embedding MLP.
+
         Args:
-            embed_dim: Output embedding dimension
-            freq_dim: Dimension of sinusoidal encoding
-            max_period: Maximum period for sinusoidal encoding
+            in_channels: Input dimension (e.g. 256 for sinusoidal encoding dim)
+            time_embed_dim: Hidden/output embedding dimension
+            act_fn: Activation function ('silu', 'mish', 'gelu')
+            out_dim: Output dimension (defaults to time_embed_dim)
+            post_act_fn: Optional post-activation after linear_2
+            cond_proj_dim: If set, adds a conditioning projection
+            bias: Whether linear layers have bias
         """
         super(Model, self).__init__()
-        self.embed_dim = embed_dim
-        self.freq_dim = freq_dim
-        self.max_period = max_period
-        
-        # MLP: sinusoidal -> embed_dim
-        self.mlp = nn.Sequential(
-            nn.Linear(freq_dim, embed_dim),
-            nn.SiLU(),
-            nn.Linear(embed_dim, embed_dim)
-        )
-    
-    def _sinusoidal_encoding(self, timesteps: torch.Tensor) -> torch.Tensor:
-        """Compute sinusoidal timestep embeddings."""
-        half_dim = self.freq_dim // 2
-        
-        # Compute frequencies
-        freqs = torch.exp(
-            -math.log(self.max_period) * torch.arange(half_dim, device=timesteps.device) / half_dim
-        )
-        
-        # Apply frequencies to timesteps
-        args = timesteps.float().unsqueeze(-1) * freqs.unsqueeze(0)
-        
-        # Concatenate sin and cos
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        
-        return embedding
-    
-    def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
+
+        self.linear_1 = nn.Linear(in_channels, time_embed_dim, bias=bias)
+
+        if cond_proj_dim is not None:
+            self.cond_proj = nn.Linear(cond_proj_dim, in_channels, bias=False)
+        else:
+            self.cond_proj = None
+
+        if act_fn == "silu":
+            self.act = nn.SiLU()
+        elif act_fn == "mish":
+            self.act = nn.Mish()
+        elif act_fn == "gelu":
+            self.act = nn.GELU()
+        else:
+            self.act = nn.SiLU()
+
+        time_embed_dim_out = out_dim if out_dim is not None else time_embed_dim
+        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim_out, bias=bias)
+
+        if post_act_fn is not None:
+            if post_act_fn == "silu":
+                self.post_act = nn.SiLU()
+            else:
+                self.post_act = None
+        else:
+            self.post_act = None
+
+    def forward(self, sample: torch.Tensor,
+                condition: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        Embed timesteps.
-        
+        Embed timestep encodings.
+
         Args:
-            timesteps: Timestep values (batch,) in range [0, 1000]
-            
+            sample: Pre-computed sinusoidal encoding (batch, in_channels)
+            condition: Optional conditioning tensor (batch, cond_proj_dim)
+
         Returns:
-            Timestep embeddings (batch, embed_dim)
+            Timestep embeddings (batch, out_dim)
         """
-        # Sinusoidal encoding
-        t_emb = self._sinusoidal_encoding(timesteps)
-        
-        # MLP projection
-        t_emb = self.mlp(t_emb)
-        
-        return t_emb
+        if condition is not None:
+            sample = sample + self.cond_proj(condition)
+        sample = self.linear_1(sample)
+        if self.act is not None:
+            sample = self.act(sample)
+        sample = self.linear_2(sample)
+        if self.post_act is not None:
+            sample = self.post_act(sample)
+        return sample
