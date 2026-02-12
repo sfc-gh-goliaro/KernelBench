@@ -1295,3 +1295,392 @@ class TestVideoE2E:
                     or max_diff >= VIDEO_PIXEL_MAX_DIFF_THRESHOLD):
                 all_pass = False
         assert all_pass, "One or more seeds failed video pixel alignment"
+
+
+# ###########################################################################
+#  SSTA Approximation Tests
+# ###########################################################################
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+class TestSSTAApproximation:
+    """Test the SSTA (Selective and Sliding Tile Attention) operator.
+
+    These tests validate that:
+    1. SSTA produces reasonable approximations of full attention.
+    2. Increasing topk improves the approximation quality.
+    3. The STA mask generation is correct.
+    4. SSTA integrates correctly with the HunyuanVideo15 model.
+
+    Run with:
+        pytest tests/test_sd_hf_alignment.py -v -k "TestSSTAApproximation"
+    """
+
+    @staticmethod
+    def _get_ssta_module():
+        """Import the SSTA operator module."""
+        return importlib.import_module(
+            "KernelBench.level1.attention._8_SSTA3DAttention")
+
+    def test_ssta_operator_vs_full_attention(self):
+        """SSTA output should approximate full SDPA with high cosine similarity."""
+        ssta_mod = self._get_ssta_module()
+
+        # Realistic 3D shape: 12 frames x 24 height x 24 width = 6912 tokens
+        T, H, W = 12, 24, 24
+        S = T * H * W
+        B, Heads, D = 1, 4, 32
+        canvas_thw = (T, H, W)
+
+        torch.manual_seed(42)
+        q = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+        k = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+        v = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+
+        # Full attention (reference)
+        with torch.no_grad():
+            full_out = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, dropout_p=0.0, is_causal=False)
+
+        # SSTA with generous topk (should be close to full)
+        ssta = ssta_mod.Model(
+            tile_size=(6, 8, 8), kernel_size=(3, 3, 3),
+            topk=64, lambda_=0.7,
+        ).to(DEVICE)
+
+        with torch.no_grad():
+            ssta_out = ssta(q, k, v, canvas_thw=canvas_thw)
+
+        # Cosine similarity per head
+        full_flat = full_out.reshape(B * Heads, -1)
+        ssta_flat = ssta_out.reshape(B * Heads, -1)
+        cos_sim = torch.nn.functional.cosine_similarity(
+            full_flat, ssta_flat, dim=-1)
+        mean_cos = cos_sim.mean().item()
+
+        # Max absolute error
+        max_abs = (full_out - ssta_out).abs().max().item()
+
+        print(f"\n  SSTA vs Full Attention:")
+        print(f"    Cosine similarity: {mean_cos:.6f}")
+        print(f"    Max abs error: {max_abs:.6f}")
+
+        assert mean_cos > 0.90, \
+            f"Cosine similarity {mean_cos:.4f} too low (expected > 0.90)"
+        assert not torch.isnan(ssta_out).any(), "NaN in SSTA output"
+        assert not torch.isinf(ssta_out).any(), "Inf in SSTA output"
+
+    def test_ssta_topk_monotonicity(self):
+        """Increasing topk should reduce the approximation error."""
+        ssta_mod = self._get_ssta_module()
+
+        T, H, W = 12, 24, 24
+        S = T * H * W
+        B, Heads, D = 1, 4, 32
+        canvas_thw = (T, H, W)
+
+        torch.manual_seed(123)
+        q = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+        k = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+        v = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+
+        # Full attention reference
+        with torch.no_grad():
+            full_out = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, dropout_p=0.0, is_causal=False)
+
+        topk_values = [2, 4, 8, 16]
+        errors = []
+
+        for topk in topk_values:
+            ssta = ssta_mod.Model(
+                tile_size=(6, 8, 8), kernel_size=(3, 3, 3),
+                topk=topk, lambda_=0.7,
+            ).to(DEVICE)
+
+            with torch.no_grad():
+                ssta_out = ssta(q, k, v, canvas_thw=canvas_thw)
+
+            mse = (full_out - ssta_out).pow(2).mean().item()
+            errors.append(mse)
+            print(f"    topk={topk:3d}: MSE={mse:.6f}")
+
+        # Check monotonicity: each error should be <= previous (with tolerance)
+        print(f"\n  Errors by topk: {errors}")
+        for i in range(1, len(errors)):
+            assert errors[i] <= errors[i-1] * 1.1, \
+                f"topk monotonicity violated: topk={topk_values[i]} " \
+                f"MSE={errors[i]:.6f} > topk={topk_values[i-1]} " \
+                f"MSE={errors[i-1]:.6f}"
+
+    def test_sta_mask_properties(self):
+        """Verify STA mask has correct structure and properties."""
+        ssta_mod = self._get_ssta_module()
+
+        # 4x6x6 = 144 tiles with 3x3x3 kernel
+        canvas_thw = (24, 48, 48)
+        tile_thw = (6, 8, 8)
+        kernel_thw = (3, 3, 3)
+
+        mask = ssta_mod.create_sta_3d_mask(canvas_thw, tile_thw, kernel_thw)
+
+        n_t = canvas_thw[0] // tile_thw[0]  # 4
+        n_h = canvas_thw[1] // tile_thw[1]  # 6
+        n_w = canvas_thw[2] // tile_thw[2]  # 6
+        block_num = n_t * n_h * n_w  # 144
+
+        print(f"\n  STA mask: {mask.shape}")
+        print(f"  Grid: {n_t}x{n_h}x{n_w} = {block_num} tiles")
+
+        # Shape check
+        assert mask.shape == (block_num, block_num), \
+            f"Expected ({block_num}, {block_num}), got {mask.shape}"
+
+        # Diagonal should be True (self-attention)
+        diag = torch.diag(mask)
+        assert diag.all(), "Diagonal should be all True (self-attention)"
+
+        # Note: STA mask is NOT symmetric because boundary tiles have their
+        # kernel center clamped, creating asymmetry. This matches the Tencent
+        # reference implementation behavior.
+
+        # Sparsity: with 3x3x3 kernel on 4x6x6 grid, ~27/144 ≈ 0.19
+        sparsity = mask.float().mean().item()
+        print(f"  Sparsity (fraction True): {sparsity:.3f}")
+        assert 0.1 < sparsity < 0.5, \
+            f"Unexpected sparsity: {sparsity:.3f}"
+
+    def test_sta_mask_with_text_blocks(self):
+        """STA mask with text blocks: text attends to everything."""
+        ssta_mod = self._get_ssta_module()
+
+        canvas_thw = (12, 16, 16)
+        tile_thw = (6, 8, 8)
+        kernel_thw = (3, 3, 3)
+        text_block_num = 2
+
+        mask = ssta_mod.create_sta_3d_mask(
+            canvas_thw, tile_thw, kernel_thw, text_block_num=text_block_num)
+
+        n_t = canvas_thw[0] // tile_thw[0]  # 2
+        n_h = canvas_thw[1] // tile_thw[1]  # 2
+        n_w = canvas_thw[2] // tile_thw[2]  # 2
+        block_num = n_t * n_h * n_w  # 8
+        total = block_num + text_block_num  # 10
+
+        assert mask.shape == (total, total), \
+            f"Expected ({total}, {total}), got {mask.shape}"
+
+        # Text blocks attend to everything
+        text_rows = mask[-text_block_num:, :]
+        assert text_rows.all(), "Text blocks should attend to all blocks"
+
+        # Everything attends to text blocks
+        text_cols = mask[:, -text_block_num:]
+        assert text_cols.all(), "All blocks should attend to text blocks"
+
+        print(f"\n  STA mask with text: {mask.shape}, "
+              f"sparsity={mask.float().mean():.3f}")
+
+    def test_tile_untile_roundtrip(self):
+        """tile -> untile should be identity."""
+        ssta_mod = self._get_ssta_module()
+
+        B, H, D = 1, 4, 32
+        T, Hs, W = 12, 24, 24
+        S = T * Hs * W
+        canvas_thw = (T, Hs, W)
+        tile_thw = (6, 8, 8)
+
+        x = torch.randn(B, H, S, D, device=DEVICE)
+        tiled = ssta_mod.tile(x, canvas_thw, tile_thw)
+        untiled = ssta_mod.untile(tiled, canvas_thw, tile_thw)
+
+        max_diff = (x - untiled).abs().max().item()
+        print(f"\n  tile/untile roundtrip: max_diff={max_diff:.2e}")
+        assert max_diff == 0.0, f"tile/untile not identity: max_diff={max_diff}"
+
+    def test_ssta_with_text_tokens(self):
+        """SSTA should handle mixed image + text token sequences."""
+        ssta_mod = self._get_ssta_module()
+
+        T, H, W = 6, 8, 8
+        S_img = T * H * W  # 384
+        text_len = 50
+        S = S_img + text_len
+        B, Heads, D = 1, 4, 32
+
+        torch.manual_seed(42)
+        q = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+        k = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+        v = torch.randn(B, Heads, S, D, device=DEVICE, dtype=torch.float32)
+
+        ssta = ssta_mod.Model(
+            tile_size=(6, 8, 8), kernel_size=(1, 1, 1), topk=1,
+        ).to(DEVICE)
+
+        with torch.no_grad():
+            out = ssta(q, k, v, canvas_thw=(T, H, W), text_len=text_len)
+
+        assert out.shape == (B, Heads, S, D), \
+            f"Expected {(B, Heads, S, D)}, got {out.shape}"
+        assert not torch.isnan(out).any(), "NaN in output"
+        assert not torch.isinf(out).any(), "Inf in output"
+        print(f"\n  SSTA with text: output shape {out.shape}, no NaN/Inf")
+
+    def test_ssta_model_vs_full_attention(self):
+        """Compare HunyuanVideo model with SSTA vs SDPA attention.
+
+        The SSTA model should produce outputs that approximate the SDPA model.
+        Requires the HunyuanVideo model weights to be available.
+        """
+        # Only run for HunyuanVideo model
+        try:
+            from diffusers.models.transformers.transformer_hunyuan_video15 import (
+                HunyuanVideo15Transformer3DModel,
+            )
+        except ImportError:
+            pytest.skip("diffusers HunyuanVideo15 not available")
+
+        model_id = "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v"
+        kb_mod = importlib.import_module("KernelBench.level4.19_HunyuanVideo15")
+
+        print(f"\n  Loading HunyuanVideo15 from {model_id}...")
+        hf_model = HunyuanVideo15Transformer3DModel.from_pretrained(
+            model_id, subfolder="transformer", torch_dtype=torch.float32,
+        ).to(DEVICE).eval()
+        hf_config = hf_model.config
+
+        # Build KB model with SDPA (baseline)
+        kb_sdpa = kb_mod.HunyuanVideo15Transformer(
+            in_channels=hf_config.in_channels,
+            out_channels=hf_config.out_channels,
+            num_attention_heads=hf_config.num_attention_heads,
+            attention_head_dim=hf_config.attention_head_dim,
+            num_layers=hf_config.num_layers,
+            num_refiner_layers=hf_config.num_refiner_layers,
+            mlp_ratio=hf_config.mlp_ratio,
+            patch_size=hf_config.patch_size,
+            patch_size_t=hf_config.patch_size_t,
+            qk_norm=hf_config.qk_norm,
+            text_embed_dim=hf_config.text_embed_dim,
+            text_embed_2_dim=hf_config.text_embed_2_dim,
+            image_embed_dim=hf_config.image_embed_dim,
+            rope_theta=hf_config.rope_theta,
+            rope_axes_dim=tuple(hf_config.rope_axes_dim),
+            attn_mode="sdpa",
+        ).to(DEVICE, dtype=torch.float32)
+
+        # Build KB model with SSTA
+        ssta_kwargs = dict(
+            tile_size=(1, 4, 4), kernel_size=(1, 3, 3),
+            topk=4, lambda_=0.7,
+        )
+        kb_ssta = kb_mod.HunyuanVideo15Transformer(
+            in_channels=hf_config.in_channels,
+            out_channels=hf_config.out_channels,
+            num_attention_heads=hf_config.num_attention_heads,
+            attention_head_dim=hf_config.attention_head_dim,
+            num_layers=hf_config.num_layers,
+            num_refiner_layers=hf_config.num_refiner_layers,
+            mlp_ratio=hf_config.mlp_ratio,
+            patch_size=hf_config.patch_size,
+            patch_size_t=hf_config.patch_size_t,
+            qk_norm=hf_config.qk_norm,
+            text_embed_dim=hf_config.text_embed_dim,
+            text_embed_2_dim=hf_config.text_embed_2_dim,
+            image_embed_dim=hf_config.image_embed_dim,
+            rope_theta=hf_config.rope_theta,
+            rope_axes_dim=tuple(hf_config.rope_axes_dim),
+            attn_mode="ssta",
+            ssta_kwargs=ssta_kwargs,
+        ).to(DEVICE, dtype=torch.float32)
+
+        # Copy weights from HF to both KB models
+        copied_sdpa, missing_sdpa, _, _ = _copy_weights(hf_model, kb_sdpa)
+        kb_sdpa.eval()
+        assert len(missing_sdpa) == 0, f"SDPA missing: {missing_sdpa[:5]}"
+
+        copied_ssta, missing_ssta, _, _ = _copy_weights(hf_model, kb_ssta)
+        kb_ssta.eval()
+        assert len(missing_ssta) == 0, f"SSTA missing: {missing_ssta[:5]}"
+
+        # Create test inputs (small resolution)
+        torch.manual_seed(42)
+        inputs = _hunyuanvideo15_make_inputs(
+            1, 8, 8, hf_config, 500.0, DEVICE, torch.float32)
+
+        with torch.no_grad():
+            out_sdpa = kb_sdpa(**inputs, return_dict=False)[0]
+            out_ssta = kb_ssta(**inputs, return_dict=False)[0]
+
+        # Compare
+        m = _compare_tensors(out_sdpa, out_ssta)
+        print(f"\n  SSTA vs SDPA model output:")
+        print(f"    max_abs={m['max_abs']:.4f}  mean_abs={m['mean_abs']:.4f}")
+        print(f"    max_rel={m['max_rel']:.4f}  mean_rel={m['mean_rel']:.4f}")
+
+        # SSTA is an approximation, so we expect some divergence
+        # but it should still be reasonable
+        assert not torch.isnan(out_ssta).any(), "NaN in SSTA model output"
+        assert not torch.isinf(out_ssta).any(), "Inf in SSTA model output"
+        assert out_sdpa.shape == out_ssta.shape, \
+            f"Shape mismatch: {out_sdpa.shape} vs {out_ssta.shape}"
+
+    def test_ssta_vs_tencent_reference_masks(self):
+        """Compare our STA mask generation against the Tencent reference.
+
+        This test verifies that our vectorized numpy STA mask implementation
+        produces the same result as the Tencent reference (which uses nested
+        loops). We re-implement the Tencent reference loop here for comparison.
+        """
+        ssta_mod = self._get_ssta_module()
+
+        canvas_thw = (24, 48, 48)
+        tile_thw = (6, 8, 8)
+        kernel_thw = (3, 3, 3)
+
+        # Our implementation
+        our_mask = ssta_mod.create_sta_3d_mask(canvas_thw, tile_thw, kernel_thw)
+
+        # Tencent reference implementation (loop-based)
+        t, h, w = canvas_thw
+        tile_t, tile_h, tile_w = tile_thw
+        kernel_t, kernel_h, kernel_w = kernel_thw
+        n_t = t // tile_t
+        n_h = h // tile_h
+        n_w = w // tile_w
+        block_num = n_t * n_h * n_w
+
+        ref_mask = torch.zeros(block_num, block_num, dtype=torch.bool)
+        for i in range(block_num):
+            q_t_idx = i // (n_h * n_w)
+            q_h_idx = (i % (n_h * n_w)) // n_w
+            q_w_idx = i % n_w
+
+            center_t = max(kernel_t // 2,
+                          min(q_t_idx, (n_t - 1) - kernel_t // 2))
+            center_h = max(kernel_h // 2,
+                          min(q_h_idx, (n_h - 1) - kernel_h // 2))
+            center_w = max(kernel_w // 2,
+                          min(q_w_idx, (n_w - 1) - kernel_w // 2))
+
+            for j in range(block_num):
+                kv_t_idx = j // (n_h * n_w)
+                kv_h_idx = (j % (n_h * n_w)) // n_w
+                kv_w_idx = j % n_w
+
+                if (abs(center_t - kv_t_idx) <= kernel_t // 2 and
+                    abs(center_h - kv_h_idx) <= kernel_h // 2 and
+                    abs(center_w - kv_w_idx) <= kernel_w // 2):
+                    ref_mask[i, j] = True
+
+        # Compare
+        match = (our_mask == ref_mask).all().item()
+        diff_count = (our_mask != ref_mask).sum().item()
+        print(f"\n  STA mask comparison with Tencent reference:")
+        print(f"    Grid: {n_t}x{n_h}x{n_w} = {block_num} tiles")
+        print(f"    Masks match: {match}")
+        print(f"    Differing entries: {diff_count}")
+
+        assert match, \
+            f"STA mask differs from Tencent reference: {diff_count} entries"

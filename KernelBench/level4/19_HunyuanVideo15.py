@@ -56,6 +56,7 @@ from KernelBench.level1.diffusion._7_SinusoidalTimesteps import Model as Sinusoi
 from KernelBench.level1.activations._7_Swish import Model as Swish
 from KernelBench.level1.activations._8_GELU import Model as GELUAct
 from KernelBench.level1.attention._2_Attention import ScaledDotProductAttention
+from KernelBench.level1.attention._8_SSTA3DAttention import Model as SSTA3DAttention
 from KernelBench.level1.regularization._1_Dropout import Model as Dropout
 from KernelBench.level1.embeddings._2_Embedding import Model as Embedding
 from KernelBench.level1.vision._2_PatchEmbed3D import Model as PatchEmbed3D
@@ -568,6 +569,8 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         attention_head_dim: int,
         mlp_ratio: float = 4.0,
         qk_norm: str = "rms_norm",
+        attn_mode: str = "sdpa",
+        ssta_kwargs: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         hidden_size = num_attention_heads * attention_head_dim
@@ -600,7 +603,12 @@ class HunyuanVideo15TransformerBlock(nn.Module):
 
         self.attn_heads = num_attention_heads
         self.attn_head_dim = attention_head_dim
-        self.sdpa = ScaledDotProductAttention(mode="sdpa")
+        self.attn_mode = attn_mode
+        if attn_mode == "ssta":
+            kw = ssta_kwargs or {}
+            self.ssta = SSTA3DAttention(**kw)
+        else:
+            self.sdpa = ScaledDotProductAttention(mode="sdpa")
 
         # FFN for latent and context
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -616,6 +624,7 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         temb: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         freqs_cis: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        canvas_thw: Optional[Tuple[int, int, int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # 1. Input normalization (AdaLN-Zero)
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
@@ -680,9 +689,22 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
 
-        attn_output = self.sdpa(
-            query, key, value, attn_mask=attention_mask_2d
-        )
+        if self.attn_mode == "ssta" and canvas_thw is not None:
+            # SSTA: sparse block attention with local window + selective non-local
+            text_len = encoder_hidden_states.shape[1]
+            text_mask_bool = None
+            if attention_mask is not None:
+                text_mask_bool = attention_mask[:1]  # (1, text_len)
+            attn_output = self.ssta(
+                query, key, value,
+                canvas_thw=canvas_thw,
+                text_len=text_len,
+                text_mask=text_mask_bool,
+            )
+        else:
+            attn_output = self.sdpa(
+                query, key, value, attn_mask=attention_mask_2d
+            )
         attn_output = attn_output.transpose(1, 2).flatten(2, 3)
         attn_output = attn_output.to(query.dtype)
 
@@ -764,11 +786,14 @@ class HunyuanVideo15Transformer(nn.Module):
         rope_theta: float = 256.0,
         rope_axes_dim: Tuple[int, ...] = (16, 56, 56),
         use_meanflow: bool = False,
+        attn_mode: str = "sdpa",
+        ssta_kwargs: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
         inner_dim = num_attention_heads * attention_head_dim
         out_channels = out_channels or in_channels
+        self.attn_mode = attn_mode
 
         # Store config (mirrors diffusers FrozenDict for pipeline compatibility)
         self.config = type('Config', (), {
@@ -822,6 +847,7 @@ class HunyuanVideo15Transformer(nn.Module):
             HunyuanVideo15TransformerBlock(
                 num_attention_heads, attention_head_dim,
                 mlp_ratio=mlp_ratio, qk_norm=qk_norm,
+                attn_mode=attn_mode, ssta_kwargs=ssta_kwargs,
             )
             for _ in range(num_layers)
         ])
@@ -947,6 +973,8 @@ class HunyuanVideo15Transformer(nn.Module):
         encoder_attention_mask = torch.stack(new_encoder_attention_mask)
 
         # 4. Transformer blocks
+        # Compute canvas_thw for SSTA (spatiotemporal grid after patching)
+        canvas_thw = (post_patch_num_frames, post_patch_height, post_patch_width) if self.attn_mode == "ssta" else None
         for block in self.transformer_blocks:
             hidden_states, encoder_hidden_states = block(
                 hidden_states,
@@ -954,6 +982,7 @@ class HunyuanVideo15Transformer(nn.Module):
                 temb,
                 encoder_attention_mask,
                 image_rotary_emb,
+                canvas_thw=canvas_thw,
             )
 
         # 5. Output projection
