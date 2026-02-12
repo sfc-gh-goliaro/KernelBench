@@ -24,6 +24,6 @@ def pytest_addoption(parser):
     parser.addoption(
         "--save-images",
         action="store_true",
-        default=False,
+        default=True,
         help="Save generated images to tests/outputs/ for visual inspection."
     )

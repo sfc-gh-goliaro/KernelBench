@@ -123,6 +123,12 @@ class ModelSpec:
     resolution_grid: List[Tuple[int, int]] = field(
         default_factory=lambda: [(32, 32), (64, 64), (96, 96)])
 
+    # --- dtype for pipeline (fp16 for most, bfloat16 for FLUX) ------------
+    pipeline_dtype: torch.dtype = torch.float16
+
+    # --- output shape: True if model outputs (B, S, C) instead of (B, C, H, W)
+    output_is_sequence: bool = False
+
     # --- callbacks (set by register helpers below) -------------------------
     # load_hf_denoiser(model_id) -> (hf_model, hf_config)
     load_hf_denoiser: Optional[Callable] = field(default=None, repr=False)
@@ -497,6 +503,328 @@ _register(ModelSpec(
 ))
 
 
+# ---------------------------------------------------------------------------
+#  FLUX.1-dev
+# ---------------------------------------------------------------------------
+
+def _flux_load_hf_denoiser(model_id: str):
+    from diffusers import FluxTransformer2DModel
+    hf = FluxTransformer2DModel.from_pretrained(
+        model_id, subfolder="transformer", torch_dtype=torch.float32,
+    ).to(DEVICE).eval()
+    return hf, hf.config
+
+
+def _flux_build_kb(hf_config):
+    kb_mod = importlib.import_module("KernelBench.level4.19_Flux")
+    return kb_mod.Flux(
+        patch_size=hf_config.patch_size,
+        in_channels=hf_config.in_channels,
+        out_channels=getattr(hf_config, "out_channels", None),
+        num_layers=hf_config.num_layers,
+        num_single_layers=hf_config.num_single_layers,
+        attention_head_dim=hf_config.attention_head_dim,
+        num_attention_heads=hf_config.num_attention_heads,
+        joint_attention_dim=hf_config.joint_attention_dim,
+        pooled_projection_dim=hf_config.pooled_projection_dim,
+        guidance_embeds=hf_config.guidance_embeds,
+        axes_dims_rope=tuple(hf_config.axes_dims_rope),
+    )
+
+
+def _flux_make_inputs(batch, h, w, hf_config, ts_val, device, dtype):
+    """Create random inputs for FLUX model-level alignment tests.
+
+    FLUX operates on packed latent sequences, not spatial tensors.
+    h, w here represent the packed sequence dimensions (not spatial).
+    We use h*w as the image sequence length.
+    """
+    # For FLUX, the input is already a sequence (B, S, C) not spatial
+    # h and w are used to compute sequence length: S_img = h * w / 4
+    # (because FLUX packs 2x2 patches)
+    # For simplicity in model-level tests, we use h*w/4 as S_img
+    s_img = (h // 2) * (w // 2)
+    s_txt = 32  # fixed text sequence length for tests
+
+    in_channels = hf_config.in_channels
+    hidden_states = torch.randn(batch, s_img, in_channels,
+                                device=device, dtype=dtype)
+    enc_hs = torch.randn(batch, s_txt, hf_config.joint_attention_dim,
+                         device=device, dtype=dtype)
+    pooled = torch.randn(batch, hf_config.pooled_projection_dim,
+                         device=device, dtype=dtype)
+    # FLUX timestep is in [0, 1] range (model multiplies by 1000 internally)
+    timestep = torch.tensor([ts_val] * batch, device=device, dtype=dtype)
+
+    # Position IDs
+    img_ids = torch.zeros(s_img, 3, device=device, dtype=dtype)
+    # Simple grid IDs for image
+    h_lat = int(s_img ** 0.5) if s_img > 0 else 1
+    w_lat = s_img // h_lat if h_lat > 0 else 1
+    for idx in range(s_img):
+        img_ids[idx, 1] = idx // w_lat
+        img_ids[idx, 2] = idx % w_lat
+    txt_ids = torch.zeros(s_txt, 3, device=device, dtype=dtype)
+
+    inputs = dict(
+        hidden_states=hidden_states,
+        encoder_hidden_states=enc_hs,
+        pooled_projections=pooled,
+        timestep=timestep,
+        img_ids=img_ids,
+        txt_ids=txt_ids,
+    )
+    # Add guidance for guidance-distilled models
+    if getattr(hf_config, "guidance_embeds", False):
+        inputs["guidance"] = torch.tensor([3.5] * batch, device=device,
+                                          dtype=dtype)
+    return inputs
+
+
+def _flux_forward(model, inputs):
+    return model(**inputs, return_dict=False)[0]
+
+
+def _flux_load_pipeline(model_id):
+    from diffusers import FluxPipeline as HFFluxPipeline
+    pipe = HFFluxPipeline.from_pretrained(
+        model_id, torch_dtype=torch.bfloat16)
+    return pipe.to(DEVICE)
+
+
+def _flux_build_kb_pipeline(pipe_hf, kb_denoiser):
+    kb_pipe_mod = importlib.import_module("KernelBench.level4.19_Flux")
+    kb_clip_mod = importlib.import_module("KernelBench.level3.encoder._5_CLIPTextEncoder")
+    kb_vae_mod = importlib.import_module("KernelBench.level3.vae._4_VAEDecoder")
+    kb_t5_mod = importlib.import_module("KernelBench.level3.encoder._6_T5Encoder")
+
+    # --- KB text_encoder (CLIPTextModel — only pooler_output used) ---
+    hf_te1 = pipe_hf.text_encoder
+    te1_cfg = hf_te1.config
+    kb_te1 = kb_clip_mod.CLIPTextModel(
+        vocab_size=te1_cfg.vocab_size,
+        hidden_size=te1_cfg.hidden_size,
+        intermediate_size=te1_cfg.intermediate_size,
+        num_hidden_layers=te1_cfg.num_hidden_layers,
+        num_attention_heads=te1_cfg.num_attention_heads,
+        max_position_embeddings=te1_cfg.max_position_embeddings,
+        hidden_act=te1_cfg.hidden_act,
+        layer_norm_eps=te1_cfg.layer_norm_eps,
+        projection_dim=getattr(te1_cfg, "projection_dim", None),
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te1, kb_te1)
+    assert len(missing) == 0, f"text_encoder missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder mismatch: {mismatch[:5]}"
+    kb_te1 = kb_te1.to(device=DEVICE, dtype=torch.bfloat16).eval()
+
+    # --- KB text_encoder_2 (T5Encoder) ---
+    hf_te2 = pipe_hf.text_encoder_2
+    te2_cfg = hf_te2.config
+    kb_te2 = kb_t5_mod.T5Encoder(
+        vocab_size=te2_cfg.vocab_size,
+        d_model=te2_cfg.d_model,
+        d_kv=te2_cfg.d_kv,
+        d_ff=te2_cfg.d_ff,
+        num_heads=te2_cfg.num_heads,
+        num_layers=te2_cfg.num_layers,
+        relative_attention_num_buckets=te2_cfg.relative_attention_num_buckets,
+        relative_attention_max_distance=te2_cfg.relative_attention_max_distance,
+        dropout_rate=te2_cfg.dropout_rate,
+        layer_norm_epsilon=te2_cfg.layer_norm_epsilon,
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_te2, kb_te2)
+    assert len(missing) == 0, f"text_encoder_2 missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"text_encoder_2 mismatch: {mismatch[:5]}"
+    kb_te2 = kb_te2.to(device=DEVICE, dtype=torch.bfloat16).eval()
+
+    # --- KB VAE decoder ---
+    hf_vae = pipe_hf.vae
+    vae_cfg = hf_vae.config
+    kb_vae = kb_vae_mod.VAEDecoder(
+        latent_channels=vae_cfg.latent_channels,
+        out_channels=vae_cfg.out_channels,
+        block_out_channels=tuple(vae_cfg.block_out_channels),
+        layers_per_block=vae_cfg.layers_per_block,
+        norm_num_groups=vae_cfg.norm_num_groups,
+        scaling_factor=vae_cfg.scaling_factor,
+        shift_factor=getattr(vae_cfg, "shift_factor", None),
+        force_upcast=getattr(vae_cfg, "force_upcast", True),
+        use_post_quant_conv=getattr(vae_cfg, "use_post_quant_conv", True),
+    )
+    copied, missing, mismatch, extra = _copy_weights(hf_vae, kb_vae)
+    assert len(missing) == 0, f"VAE missing: {missing[:5]}"
+    assert len(mismatch) == 0, f"VAE mismatch: {mismatch[:5]}"
+    kb_vae = kb_vae.to(device=DEVICE, dtype=torch.bfloat16).eval()
+
+    return kb_pipe_mod.FluxPipeline(
+        transformer=kb_denoiser,
+        scheduler=pipe_hf.scheduler,
+        vae=kb_vae,
+        text_encoder=kb_te1,
+        tokenizer=pipe_hf.tokenizer,
+        text_encoder_2=kb_te2,
+        tokenizer_2=pipe_hf.tokenizer_2,
+    ).to(DEVICE)
+
+
+_register(ModelSpec(
+    model_id="black-forest-labs/FLUX.1-dev",
+    short_name="flux",
+    rtol_mean=5e-3,
+    max_abs_diff=5e-2,
+    e2e_guidance_scale=3.5,
+    e2e_default_height=512,
+    e2e_default_width=512,
+    e2e_native_height=None,       # no special high-res test
+    e2e_native_width=None,
+    e2e_seeds=[0, 99, 2024],
+    # FLUX timesteps are in [0, 1] range (model multiplies by 1000 internally)
+    timestep_values=[0.0, 0.1, 0.5, 0.9, 0.999],
+    resolution_grid=[(32, 32), (64, 64), (96, 96)],
+    pipeline_dtype=torch.bfloat16,
+    output_is_sequence=True,
+    load_hf_denoiser=_flux_load_hf_denoiser,
+    build_kb_denoiser=_flux_build_kb,
+    make_inputs=_flux_make_inputs,
+    forward_fn=_flux_forward,
+    get_out_channels=lambda cfg: cfg.out_channels or cfg.in_channels,
+    load_hf_pipeline=_flux_load_pipeline,
+    build_kb_pipeline=_flux_build_kb_pipeline,
+    get_pipeline_denoiser=lambda pipe: pipe.transformer,
+    get_pipeline_config=lambda pipe: pipe.transformer.config,
+))
+
+
+# ---------------------------------------------------------------------------
+#  HunyuanVideo 1.5
+# ---------------------------------------------------------------------------
+
+def _hunyuanvideo15_load_hf_denoiser(model_id: str):
+    from diffusers.models.transformers.transformer_hunyuan_video15 import (
+        HunyuanVideo15Transformer3DModel,
+    )
+    hf = HunyuanVideo15Transformer3DModel.from_pretrained(
+        model_id, subfolder="transformer", torch_dtype=torch.float32,
+    ).to(DEVICE).eval()
+    return hf, hf.config
+
+
+def _hunyuanvideo15_build_kb(hf_config):
+    kb_mod = importlib.import_module("KernelBench.level4.20_HunyuanVideo15")
+    return kb_mod.HunyuanVideo15Transformer(
+        in_channels=hf_config.in_channels,
+        out_channels=hf_config.out_channels,
+        num_attention_heads=hf_config.num_attention_heads,
+        attention_head_dim=hf_config.attention_head_dim,
+        num_layers=hf_config.num_layers,
+        num_refiner_layers=hf_config.num_refiner_layers,
+        mlp_ratio=hf_config.mlp_ratio,
+        patch_size=hf_config.patch_size,
+        patch_size_t=hf_config.patch_size_t,
+        qk_norm=hf_config.qk_norm,
+        text_embed_dim=hf_config.text_embed_dim,
+        text_embed_2_dim=hf_config.text_embed_2_dim,
+        image_embed_dim=hf_config.image_embed_dim,
+        rope_theta=hf_config.rope_theta,
+        rope_axes_dim=tuple(hf_config.rope_axes_dim),
+        use_meanflow=getattr(hf_config, "use_meanflow", False),
+    )
+
+
+def _hunyuanvideo15_make_inputs(batch, h, w, hf_config, ts_val, device, dtype):
+    """Create random inputs for HunyuanVideo 1.5 model-level alignment tests.
+
+    The model takes 5D video latents (B, C, F, H, W).
+    h, w are spatial latent dimensions; we use 2 frames for testing.
+    """
+    in_channels = hf_config.in_channels
+    num_frames = 2  # minimal temporal dimension for testing
+
+    hidden_states = torch.randn(batch, in_channels, num_frames, h, w,
+                                device=device, dtype=dtype)
+    timestep = torch.tensor([ts_val] * batch, device=device, dtype=dtype)
+
+    # Qwen text embeddings
+    text_seq_len = 16
+    enc_hs = torch.randn(batch, text_seq_len, hf_config.text_embed_dim,
+                         device=device, dtype=dtype)
+    enc_mask = torch.ones(batch, text_seq_len, device=device, dtype=torch.long)
+
+    # ByT5 text embeddings
+    text_2_seq_len = 12
+    enc_hs_2 = torch.randn(batch, text_2_seq_len, hf_config.text_embed_2_dim,
+                            device=device, dtype=dtype)
+    enc_mask_2 = torch.ones(batch, text_2_seq_len, device=device, dtype=torch.long)
+
+    # Image embeddings (zeros = text-to-video mode)
+    image_seq_len = 4
+    image_embeds = torch.zeros(batch, image_seq_len, hf_config.image_embed_dim,
+                               device=device, dtype=dtype)
+
+    return dict(
+        hidden_states=hidden_states,
+        timestep=timestep,
+        encoder_hidden_states=enc_hs,
+        encoder_attention_mask=enc_mask,
+        encoder_hidden_states_2=enc_hs_2,
+        encoder_attention_mask_2=enc_mask_2,
+        image_embeds=image_embeds,
+    )
+
+
+def _hunyuanvideo15_forward(model, inputs):
+    return model(**inputs, return_dict=False)[0]
+
+
+def _hunyuanvideo15_load_pipeline(model_id):
+    from diffusers import HunyuanVideo15Pipeline as HFPipeline
+    pipe = HFPipeline.from_pretrained(
+        model_id, torch_dtype=torch.bfloat16,
+    )
+    return pipe.to(DEVICE)
+
+
+def _hunyuanvideo15_build_kb_pipeline(pipe_hf, kb_denoiser):
+    """Build KB pipeline for HunyuanVideo 1.5 E2E tests.
+
+    Swaps the KB denoiser into a copy of the HF pipeline, keeping all other
+    components (text encoders, VAE, scheduler, guider) from HF.
+    """
+    import copy
+    pipe_kb = copy.copy(pipe_hf)
+    pipe_kb.transformer = kb_denoiser
+    return pipe_kb
+
+
+_register(ModelSpec(
+    model_id="hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v",
+    short_name="hunyuanvideo15",
+    rtol_mean=1e-5,
+    max_abs_diff=1e-4,
+    e2e_guidance_scale=1.0,
+    e2e_default_height=512,
+    e2e_default_width=512,
+    e2e_native_height=None,
+    e2e_native_width=None,
+    e2e_seeds=[0, 99, 2024],
+    # HunyuanVideo timesteps are in [0, 1000] range
+    timestep_values=[0.0, 100.0, 500.0, 900.0, 999.0],
+    resolution_grid=[(8, 8), (16, 16), (32, 32), (48, 48), (64, 64)],
+    pipeline_dtype=torch.bfloat16,
+    # HunyuanVideo outputs (B, C, F, H, W) — 5D video tensor
+    output_is_sequence=False,
+    load_hf_denoiser=_hunyuanvideo15_load_hf_denoiser,
+    build_kb_denoiser=_hunyuanvideo15_build_kb,
+    make_inputs=_hunyuanvideo15_make_inputs,
+    forward_fn=_hunyuanvideo15_forward,
+    get_out_channels=lambda cfg: cfg.out_channels,
+    load_hf_pipeline=_hunyuanvideo15_load_pipeline,
+    build_kb_pipeline=_hunyuanvideo15_build_kb_pipeline,
+    get_pipeline_denoiser=lambda pipe: pipe.transformer,
+    get_pipeline_config=lambda pipe: pipe.transformer.config,
+))
+
+
 # ###########################################################################
 #  Shared helpers
 # ###########################################################################
@@ -607,6 +935,96 @@ def _save_image(img, name: str, save: bool = False):
         print(f"  Saved: {path}")
 
 
+def _save_video(frames_np, name: str, save: bool = False, fps: int = 8):
+    """Save a video as an MP4 file (requires imageio).
+
+    Args:
+        frames_np: numpy array of shape (num_frames, H, W, 3) with values in [0, 1]
+        name: filename (e.g. "hunyuanvideo15_hf.mp4")
+        save: whether to actually save
+        fps: frames per second
+    """
+    if not save:
+        return
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    path = os.path.join(OUTPUT_DIR, name)
+    try:
+        import imageio
+        frames_uint8 = (np.clip(frames_np, 0, 1) * 255).astype(np.uint8)
+        writer = imageio.get_writer(path, fps=fps)
+        for frame in frames_uint8:
+            writer.append_data(frame)
+        writer.close()
+        print(f"  Saved video: {path}  ({len(frames_uint8)} frames, {fps} fps)")
+    except ImportError:
+        # Fallback: save individual frames as PNGs
+        from PIL import Image
+        frame_dir = path.replace(".mp4", "_frames")
+        os.makedirs(frame_dir, exist_ok=True)
+        frames_uint8 = (np.clip(frames_np, 0, 1) * 255).astype(np.uint8)
+        for i, frame in enumerate(frames_uint8):
+            Image.fromarray(frame).save(
+                os.path.join(frame_dir, f"frame_{i:04d}.png"))
+        print(f"  Saved {len(frames_uint8)} frames to: {frame_dir}")
+
+
+def _compare_videos(vid_a, vid_b, tag: str = ""):
+    """Compare two video numpy arrays.
+
+    Args:
+        vid_a, vid_b: numpy arrays of shape (num_frames, H, W, 3) in [0, 1]
+        tag: label for printing
+
+    Returns:
+        (mse, max_diff) in [0, 255] scale for consistency with image comparison
+    """
+    assert vid_a.shape == vid_b.shape, \
+        f"Shape mismatch: {vid_a.shape} vs {vid_b.shape}"
+    # Convert to 0-255 scale for comparison consistency with image tests
+    a_255 = vid_a.astype(np.float32) * 255
+    b_255 = vid_b.astype(np.float32) * 255
+    diff = a_255 - b_255
+    mse = float(np.mean(diff ** 2))
+    max_diff = float(np.max(np.abs(diff)))
+    mean_abs = float(np.mean(np.abs(diff)))
+    print(f"  [{tag}] shape={vid_a.shape}  pixel MSE={mse:.4f}  "
+          f"mean_abs={mean_abs:.4f}  max_diff={max_diff:.1f}")
+    return mse, max_diff
+
+
+def _generate_video_pair(pipe_hf, pipe_kb, prompt, seed=42, num_steps=20,
+                         height=320, width=512, num_frames=9,
+                         negative_prompt=""):
+    """Generate a video pair from HF and KB pipelines.
+
+    Note: HunyuanVideo15Pipeline uses a ``guider`` component for guidance
+    (not a ``guidance_scale`` kwarg), so guidance is controlled via the
+    pipeline's guider configuration.
+
+    Returns:
+        (vid_hf, vid_kb): numpy arrays of shape (num_frames, H, W, 3) in [0, 1]
+    """
+    gen_hf = torch.Generator(device=DEVICE).manual_seed(seed)
+    result_hf = pipe_hf(
+        prompt=prompt, negative_prompt=negative_prompt or None,
+        height=height, width=width, num_frames=num_frames,
+        num_inference_steps=num_steps,
+        generator=gen_hf, output_type="np",
+    )
+    vid_hf = result_hf.frames[0]  # (num_frames, H, W, 3)
+
+    gen_kb = torch.Generator(device=DEVICE).manual_seed(seed)
+    result_kb = pipe_kb(
+        prompt=prompt, negative_prompt=negative_prompt or None,
+        height=height, width=width, num_frames=num_frames,
+        num_inference_steps=num_steps,
+        generator=gen_kb, output_type="np",
+    )
+    vid_kb = result_kb.frames[0]  # (num_frames, H, W, 3)
+
+    return vid_hf, vid_kb
+
+
 def _generate_pair(pipe_hf, pipe_kb, prompt, seed=42, num_steps=20,
                    height=512, width=512, guidance_scale=7.5,
                    negative_prompt=""):
@@ -709,7 +1127,7 @@ def pipelines(spec):
     assert len(mismatched) == 0, f"Shape mismatches: {mismatched[:10]}"
     assert len(extra) == 0, f"Extra HF weights: {extra[:10]}"
 
-    kb_denoiser = kb_denoiser.to(device=DEVICE, dtype=torch.float16).eval()
+    kb_denoiser = kb_denoiser.to(device=DEVICE, dtype=spec.pipeline_dtype).eval()
     print(f"  KB denoiser created & weights copied  "
           f"({sum(p.numel() for p in kb_denoiser.parameters()):,} params)")
 
@@ -828,7 +1246,7 @@ class TestModelAlignment:
         assert all_pass, "Some resolutions failed"
 
     def test_output_shape(self, spec, denoiser_models):
-        """Output shape is (B, out_channels, H, W), no NaN/Inf."""
+        """Output shape is correct, no NaN/Inf."""
         _, kb_model, hf_config, *_ = denoiser_models
         torch.manual_seed(0)
         inputs = spec.make_inputs(1, 64, 64, hf_config,
@@ -836,8 +1254,22 @@ class TestModelAlignment:
                                   DEVICE, torch.float32)
         with torch.no_grad():
             out = spec.forward_fn(kb_model, inputs)
-        expected = (1, spec.get_out_channels(hf_config), 64, 64)
-        assert out.shape == expected, f"Expected {expected}, got {out.shape}"
+        if spec.output_is_sequence:
+            # FLUX: output is (B, S, C) — verify batch dim and channel dim
+            assert out.ndim == 3, f"Expected 3D output, got {out.ndim}D"
+            assert out.shape[0] == 1, f"Expected batch=1, got {out.shape[0]}"
+            assert out.shape[2] == spec.get_out_channels(hf_config), \
+                f"Expected C={spec.get_out_channels(hf_config)}, got {out.shape[2]}"
+        elif out.ndim == 5:
+            # Video model (e.g. HunyuanVideo): output is (B, C, F, H, W)
+            assert out.shape[0] == 1, f"Expected batch=1, got {out.shape[0]}"
+            assert out.shape[1] == spec.get_out_channels(hf_config), \
+                f"Expected C={spec.get_out_channels(hf_config)}, got {out.shape[1]}"
+        else:
+            # UNet/MMDiT: output is (B, C, H, W)
+            expected = (1, spec.get_out_channels(hf_config), 64, 64)
+            assert out.shape == expected, \
+                f"Expected {expected}, got {out.shape}"
         assert not torch.isnan(out).any(), "NaN in output"
         assert not torch.isinf(out).any(), "Inf in output"
 
@@ -963,3 +1395,73 @@ class TestE2E:
                                          tag="negative_prompt")
         assert mse < PIXEL_MSE_THRESHOLD
         assert max_diff < PIXEL_MAX_DIFF_THRESHOLD
+
+
+# ###########################################################################
+#  End-to-End Video Pipeline Tests (bfloat16)
+# ###########################################################################
+
+# Video pixel tolerances (bfloat16, 0-255 range)
+# With the SDPA-mode fix the KB transformer is bit-identical to HF,
+# so E2E videos should match exactly (MSE ≈ 0).
+VIDEO_PIXEL_MSE_THRESHOLD = 1.0
+VIDEO_PIXEL_MAX_DIFF_THRESHOLD = 20
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+class TestVideoE2E:
+    """Full video pipeline: text encode -> denoise -> 3D VAE decode -> compare.
+
+    Only runs for video models (e.g. HunyuanVideo 1.5).
+    Uses small resolution and few frames to keep test time manageable.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _skip_non_video(self, spec):
+        """Skip these tests for non-video models."""
+        if spec.short_name not in ("hunyuanvideo15",):
+            pytest.skip(f"TestVideoE2E only for video models, not {spec.short_name}")
+
+    def test_video_generation(self, spec, pipelines, save_images):
+        """Generate a short video and compare HF vs KB outputs."""
+        pipe_hf, pipe_kb = pipelines
+        prompt = (
+            "A golden retriever playing fetch on a sunny beach, "
+            "waves crashing in the background, cinematic lighting"
+        )
+        print(f"\n  Prompt: \"{prompt}\"")
+        vid_hf, vid_kb = _generate_video_pair(
+            pipe_hf, pipe_kb, prompt=prompt,
+            seed=42, num_steps=20,
+            height=320, width=512, num_frames=9,
+        )
+        _save_video(vid_hf, f"{spec.short_name}_beach_hf.mp4", save_images)
+        _save_video(vid_kb, f"{spec.short_name}_beach_kb.mp4", save_images)
+        mse, max_diff = _compare_videos(vid_hf, vid_kb, tag="beach")
+        assert mse < VIDEO_PIXEL_MSE_THRESHOLD, \
+            f"Video MSE {mse:.4f} exceeds threshold {VIDEO_PIXEL_MSE_THRESHOLD}"
+        assert max_diff < VIDEO_PIXEL_MAX_DIFF_THRESHOLD, \
+            f"Video max diff {max_diff:.1f} exceeds threshold {VIDEO_PIXEL_MAX_DIFF_THRESHOLD}"
+
+    def test_video_different_seeds(self, spec, pipelines, save_images):
+        """Video alignment across multiple seeds."""
+        pipe_hf, pipe_kb = pipelines
+        prompt = "A time-lapse of a flower blooming in a garden"
+        print(f"\n  Prompt: \"{prompt}\" (multiple seeds)")
+        all_pass = True
+        for seed in spec.e2e_seeds:
+            vid_hf, vid_kb = _generate_video_pair(
+                pipe_hf, pipe_kb, prompt=prompt,
+                seed=seed, num_steps=15,
+                height=320, width=512, num_frames=9,
+            )
+            _save_video(vid_hf, f"{spec.short_name}_flower_seed{seed}_hf.mp4",
+                        save_images)
+            _save_video(vid_kb, f"{spec.short_name}_flower_seed{seed}_kb.mp4",
+                        save_images)
+            mse, max_diff = _compare_videos(vid_hf, vid_kb,
+                                             tag=f"seed={seed}")
+            if (mse >= VIDEO_PIXEL_MSE_THRESHOLD
+                    or max_diff >= VIDEO_PIXEL_MAX_DIFF_THRESHOLD):
+                all_pass = False
+        assert all_pass, "One or more seeds failed video pixel alignment"
