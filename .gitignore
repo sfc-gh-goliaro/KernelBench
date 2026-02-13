@@ -22,4 +22,6 @@ transformers/
 diffusers/
 vllm/
 sglang/
+ultralytics/
 test.py
+*.pt

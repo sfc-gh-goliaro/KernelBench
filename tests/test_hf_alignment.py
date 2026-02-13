@@ -56,6 +56,7 @@ from transformers import WhisperForConditionalGeneration, WhisperProcessor
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from transformers import Qwen3VLForConditionalGeneration
 from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
+from transformers import RTDetrV2ForObjectDetection, AutoImageProcessor as RTDetrImageProcessor
 import json
 import math
 import re
@@ -142,6 +143,9 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     "state-spaces/mamba-790m-hf": "KernelBench.level4.6_Mamba1",
     "state-spaces/mamba-370m-hf": "KernelBench.level4.6_Mamba1",
     "state-spaces/mamba-130m-hf": "KernelBench.level4.6_Mamba1",
+    # RT-DETR v2 (Object Detection)
+    "PekingU/rtdetr_v2_r18vd": "KernelBench.level4.24_RTDetrV2",
+    "PekingU/rtdetr_v2_r50vd": "KernelBench.level4.24_RTDetrV2",
 }
 
 
@@ -927,6 +931,40 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
         kb_model.load_state_dict(kb_state)
         return
     
+    if _is_rtdetr_v2_model(model_name):
+        explicit_mapping = _build_rtdetr_v2_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            # Skip deformable attention n_points_scale buffers (computed locally)
+            if 'n_points_scale' in kb_key:
+                skipped_buffers += 1
+                continue
+            
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:20]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 20:
+                print(f"    ... and {len(missing_in_hf) - 20} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
     # Default: Llama/Falcon/Mistral/BLOOM/Mamba style
     # Detect HF model prefix (e.g., "model." for Llama, "transformer." for Falcon, "backbone." for Mamba2)
     hf_prefix = ""
@@ -1028,6 +1066,105 @@ def _is_qwen3vl_model(model_name: str) -> bool:
 def _is_qwen3omni_model(model_name: str) -> bool:
     """Check if a model is a Qwen3-Omni-MoE multimodal model."""
     return "qwen3-omni" in model_name.lower()
+
+
+def _is_rtdetr_v2_model(model_name: str) -> bool:
+    """Check if a model is an RT-DETR v2 object detection model."""
+    return "rtdetr_v2" in model_name.lower() or "rtdetrv2" in model_name.lower()
+
+
+def _create_kb_rtdetr_v2_config(hf_config) -> dict:
+    """Create KernelBench config dict for RT-DETR v2 models."""
+    # The backbone_config needs to be passed as a dict so our Model can reconstruct it
+    backbone_config = hf_config.backbone_config
+    if hasattr(backbone_config, 'to_dict'):
+        backbone_config_dict = backbone_config.to_dict()
+    else:
+        backbone_config_dict = dict(backbone_config)
+    
+    return {
+        'd_model': hf_config.d_model,
+        'encoder_hidden_dim': hf_config.encoder_hidden_dim,
+        'encoder_in_channels': hf_config.encoder_in_channels,
+        'encoder_ffn_dim': hf_config.encoder_ffn_dim,
+        'encoder_layers': hf_config.encoder_layers,
+        'encoder_attention_heads': hf_config.encoder_attention_heads,
+        'encoder_activation_function': hf_config.encoder_activation_function,
+        'feat_strides': hf_config.feat_strides,
+        'encode_proj_layers': hf_config.encode_proj_layers,
+        'positional_encoding_temperature': hf_config.positional_encoding_temperature,
+        'eval_size': hf_config.eval_size,
+        'normalize_before': hf_config.normalize_before,
+        'hidden_expansion': hf_config.hidden_expansion,
+        'activation_function': hf_config.activation_function,
+        'batch_norm_eps': hf_config.batch_norm_eps,
+        'layer_norm_eps': hf_config.layer_norm_eps,
+        'dropout': hf_config.dropout,
+        'activation_dropout': hf_config.activation_dropout,
+        'attention_dropout': hf_config.attention_dropout,
+        'num_queries': hf_config.num_queries,
+        'num_labels': hf_config.num_labels,
+        'num_feature_levels': hf_config.num_feature_levels,
+        'decoder_layers': hf_config.decoder_layers,
+        'decoder_attention_heads': hf_config.decoder_attention_heads,
+        'decoder_ffn_dim': hf_config.decoder_ffn_dim,
+        'decoder_in_channels': hf_config.decoder_in_channels,
+        'decoder_n_points': hf_config.decoder_n_points,
+        'decoder_n_levels': hf_config.decoder_n_levels,
+        'decoder_offset_scale': hf_config.decoder_offset_scale,
+        'decoder_method': hf_config.decoder_method,
+        'decoder_activation_function': hf_config.decoder_activation_function,
+        'num_denoising': hf_config.num_denoising,
+        'learn_initial_query': hf_config.learn_initial_query,
+        'anchor_image_size': hf_config.anchor_image_size,
+        'with_box_refine': hf_config.with_box_refine,
+        'freeze_backbone_batch_norms': hf_config.freeze_backbone_batch_norms,
+        'use_pretrained_backbone': hf_config.use_pretrained_backbone,
+        'use_timm_backbone': hf_config.use_timm_backbone,
+        'backbone': hf_config.backbone,
+        'backbone_kwargs': hf_config.backbone_kwargs,
+        'backbone_config': backbone_config_dict,
+    }
+
+
+def _build_rtdetr_v2_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for RT-DETR v2 models.
+    
+    HF RTDetrV2ForObjectDetection uses:
+      model.backbone.model.* -> KB: backbone.model.*
+      model.encoder_input_proj.* -> KB: encoder_input_proj.*
+      model.encoder.* -> KB: encoder.*
+      model.decoder_input_proj.* -> KB: decoder_input_proj.*
+      model.decoder.* -> KB: decoder.*
+      model.enc_output.* -> KB: enc_output.*
+      model.enc_score_head.* -> KB: enc_score_head.*
+      model.enc_bbox_head.* -> KB: enc_bbox_head.*
+      class_embed.* -> KB: class_embed.*
+      bbox_embed.* -> KB: bbox_embed.*
+    
+    KB level1 operator wrappers add extra nesting:
+      LayerNorm: .ln.weight/.ln.bias -> .weight/.bias
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        unwrapped = kb_key
+        
+        # Unwrap level1 LayerNorm wrapper
+        unwrapped = unwrapped.replace('.ln.weight', '.weight').replace('.ln.bias', '.bias')
+        
+        # Try with model. prefix for model-level weights
+        hf_key = 'model.' + unwrapped
+        if hf_key in hf_state:
+            mapping[kb_key] = hf_key
+            continue
+        
+        # Direct match for detection heads (class_embed, bbox_embed)
+        if unwrapped in hf_state:
+            mapping[kb_key] = unwrapped
+            continue
+    
+    return mapping
 
 
 def _fix_mamba2_config_json(model_path: str) -> None:
@@ -1369,6 +1506,9 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     # Check if this is a Qwen3-Omni-MoE model
     if getattr(hf_config, 'model_type', None) == 'qwen3_omni_moe':
         return _create_kb_qwen3omni_config(hf_config)
+    # Check if this is an RT-DETR v2 model
+    if getattr(hf_config, 'model_type', None) == 'rt_detr_v2':
+        return _create_kb_rtdetr_v2_config(hf_config)
     # Get rope_scaling if available (not used by BLOOM which uses ALiBi)
     rope_scaling = getattr(hf_config, 'rope_scaling', None)
     
@@ -1687,6 +1827,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     is_qwen2vl = _is_qwen2vl_model(model_name)
     is_qwen3vl = _is_qwen3vl_model(model_name)
     is_qwen3omni = _is_qwen3omni_model(model_name)
+    is_rtdetr_v2 = _is_rtdetr_v2_model(model_name)
     
     # SSM models need snapshot_download for local path loading
     if is_ssm:
@@ -1711,7 +1852,10 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     qwen2vl_processor = None
     qwen3vl_processor = None
     qwen3omni_processor = None
-    if is_swinv2:
+    rtdetr_v2_processor = None
+    if is_rtdetr_v2:
+        rtdetr_v2_processor = AutoImageProcessor.from_pretrained(model_name)
+    elif is_swinv2:
         image_processor = AutoImageProcessor.from_pretrained(model_name)
     elif is_whisper:
         whisper_processor = WhisperProcessor.from_pretrained(model_name)
@@ -1750,6 +1894,8 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         total_layers = hf_config.text_config.num_hidden_layers
     elif is_qwen2vl:
         total_layers = hf_config.text_config.num_hidden_layers
+    elif is_rtdetr_v2:
+        total_layers = hf_config.decoder_layers
     elif is_swinv2:
         # SwinV2 uses depths list, not a single num_layers
         total_layers = sum(hf_config.depths)
@@ -1828,6 +1974,16 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
             hf_config.encoder_layers = num_layers
             hf_config.decoder_layers = num_layers
         hf_model = WhisperForConditionalGeneration.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+        )
+        hf_model.eval()
+    elif is_rtdetr_v2:
+        if truncated:
+            hf_config.decoder_layers = num_layers
+        hf_model = RTDetrV2ForObjectDetection.from_pretrained(
             model_name,
             config=hf_config,
             torch_dtype=DTYPE,
@@ -1916,6 +2072,9 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         kb_config['num_hidden_layers'] = num_layers
         if truncated:
             kb_config['vision_depth'] = min(num_layers, kb_config['vision_depth'])
+    elif is_rtdetr_v2:
+        if truncated:
+            kb_config['decoder_layers'] = num_layers
     elif is_t5:
         kb_config['num_encoder_layers'] = num_layers
         kb_config['num_decoder_layers'] = num_layers
@@ -1943,7 +2102,12 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     copy_weights(hf_model, kb_model, num_layers, model_name=model_name)
     kb_model.eval()
     
-    if is_qwen3omni:
+    if is_rtdetr_v2:
+        print(f"Loaded: {num_layers}/{total_layers} decoder layers, "
+              f"d_model={kb_config['d_model']}, "
+              f"num_queries={kb_config['num_queries']}, "
+              f"{kb_config['decoder_attention_heads']} heads (RT-DETR v2)")
+    elif is_qwen3omni:
         print(f"Loaded: {num_layers}/{total_layers} LLM layers, "
               f"vision_depth={kb_config['vision_depth']}, "
               f"audio_layers={kb_config['audio_encoder_layers']}, "
@@ -1978,7 +2142,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
               f"{kb_config['num_heads']} heads, {kb_config['num_kv_heads']} kv_heads")
     
-    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor
+    return hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor, rtdetr_v2_processor
 
 
 # ============================================================================
@@ -2022,7 +2186,7 @@ def test_prefill_alignment(loaded_models):
     For T5: uses text prompts as encoder input, pad token as decoder input.
     For SwinV2: uses random pixel values for image classification.
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor, rtdetr_v2_processor), model_name, max_layers = loaded_models
     
     is_ssm = _is_ssm_model(model_name)
     is_t5 = _is_t5_model(model_name)
@@ -2031,11 +2195,63 @@ def test_prefill_alignment(loaded_models):
     is_qwen2vl = _is_qwen2vl_model(model_name)
     is_qwen3vl = _is_qwen3vl_model(model_name)
     is_qwen3omni = _is_qwen3omni_model(model_name)
+    is_rtdetr_v2 = _is_rtdetr_v2_model(model_name)
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
     print(f"Testing Prefill Alignment for {model_name}{layers_info}")
     print("="*70)
+    
+    if is_rtdetr_v2:
+        # RT-DETR v2: test with real images from COCO
+        assert rtdetr_v2_processor is not None, "Image processor required for RT-DETR v2"
+        test_images = _load_test_images()
+        print(f"  Loaded {len(test_images)} test images")
+        
+        for i, (pil_image, image_url) in enumerate(test_images):
+            # Preprocess with the official HuggingFace image processor
+            inputs = rtdetr_v2_processor(images=pil_image, return_tensors="pt")
+            pixel_values = inputs['pixel_values'].to(device=DEVICE, dtype=DTYPE)
+            
+            # HF forward pass
+            with torch.no_grad():
+                hf_outputs = hf_model(pixel_values)
+                hf_logits = hf_outputs.logits
+                hf_pred_boxes = hf_outputs.pred_boxes
+            
+            # KB forward pass
+            with torch.no_grad():
+                kb_logits, kb_pred_boxes = kb_model(pixel_values)
+            
+            # Compare logits
+            logit_diff = (hf_logits.float() - kb_logits.float()).abs()
+            mean_logit_diff = logit_diff.mean().item()
+            max_logit_diff = logit_diff.max().item()
+            
+            # Compare boxes
+            box_diff = (hf_pred_boxes.float() - kb_pred_boxes.float()).abs()
+            mean_box_diff = box_diff.mean().item()
+            max_box_diff = box_diff.max().item()
+            
+            img_name = image_url.split('/')[-1]
+            print(f"\n  Image {i+1} ({img_name}):")
+            print(f"    Logits  - mean diff: {mean_logit_diff:.6e}, max diff: {max_logit_diff:.6e}")
+            print(f"    Boxes   - mean diff: {mean_box_diff:.6e}, max diff: {max_box_diff:.6e}")
+            
+            # Check top detections match
+            hf_scores = hf_logits.sigmoid().max(-1).values[0]
+            kb_scores = kb_logits.sigmoid().max(-1).values[0]
+            hf_top5 = hf_scores.topk(5).indices
+            kb_top5 = kb_scores.topk(5).indices
+            top5_match = set(hf_top5.tolist()) == set(kb_top5.tolist())
+            print(f"    Top-5 detection indices match: {top5_match}")
+            
+            # Strict tolerance for detection model
+            assert mean_logit_diff < 1e-3, f"Mean logit diff {mean_logit_diff:.6e} exceeds threshold"
+            assert mean_box_diff < 1e-4, f"Mean box diff {mean_box_diff:.6e} exceeds threshold"
+        
+        print("\n  RT-DETR v2 alignment: PASS")
+        return
     
     if is_swinv2:
         # SwinV2: test with real images preprocessed by the HF image processor
@@ -2840,9 +3056,11 @@ def test_generation(loaded_models):
     Validates that both implementations produce matching token sequences.
     Skipped for SwinV2 (image classification, no generation).
     """
-    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, kb_module, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor, rtdetr_v2_processor), model_name, max_layers = loaded_models
     
-    # Skip generation test for vision models
+    # Skip generation test for detection/vision models
+    if _is_rtdetr_v2_model(model_name):
+        pytest.skip("RT-DETR v2 is an object detection model, no generation test")
     if _is_swinv2_model(model_name):
         pytest.skip("SwinV2 is an image classification model, no generation test")
     
@@ -3290,7 +3508,7 @@ def test_components(loaded_models):
     Validates that individual model components (embeddings, layer norms, MLP, LM head)
     produce matching outputs between HuggingFace and KernelBench implementations.
     """
-    (hf_model, kb_model, tokenizer, kb_config, _, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor), model_name, max_layers = loaded_models
+    (hf_model, kb_model, tokenizer, kb_config, _, image_processor, whisper_processor, qwen2vl_processor, qwen3vl_processor, qwen3omni_processor, rtdetr_v2_processor), model_name, max_layers = loaded_models
     
     is_t5 = _is_t5_model(model_name)
     is_swinv2 = _is_swinv2_model(model_name)
@@ -3298,6 +3516,10 @@ def test_components(loaded_models):
     is_qwen2vl = _is_qwen2vl_model(model_name)
     is_qwen3vl = _is_qwen3vl_model(model_name)
     is_qwen3omni = _is_qwen3omni_model(model_name)
+    is_rtdetr_v2 = _is_rtdetr_v2_model(model_name)
+    
+    if is_rtdetr_v2:
+        pytest.skip("RT-DETR v2 component tests not yet implemented (use test_prefill_alignment)")
     
     if is_qwen3omni:
         pytest.skip("Qwen3-Omni component tests not yet implemented (use test_prefill_alignment)")
