@@ -120,7 +120,7 @@ def kb_eagle3_model():
     from KernelBench.level4 import __path__ as level4_paths
     import importlib
 
-    module = importlib.import_module("KernelBench.level4.28_EAGLE3")
+    module = importlib.import_module("KernelBench.level4.29_EAGLE3")
     ModelClass = module.Model
 
     model = ModelClass.from_eagle_checkpoint(

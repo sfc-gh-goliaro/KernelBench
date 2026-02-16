@@ -25,5 +25,6 @@ sglang/
 ultralytics/
 pytorch-image-models/
 EAGLE/
+Fast-dLLM/
 test.py
 *.pt

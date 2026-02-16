@@ -585,20 +585,6 @@ HARDCODED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "target_model": "meta-llama/Llama-3-70B",
     },
     
-    # Speculative - Lookahead
-    "lookahead-W4-N5": {
-        "window_size": 4,
-        "ngram_size": 5,
-        "max_verify_length": 20,
-        "cache_size": 8192,
-    },
-    "lookahead-W7-N7": {
-        "window_size": 7,
-        "ngram_size": 7,
-        "max_verify_length": 49,
-        "cache_size": 16384,
-    },
-    
     # Neural Rendering - 3DGS
     "3dgs-1m": {
         "num_gaussians": 1000000,
@@ -699,6 +685,22 @@ HARDCODED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "num_nodes": 105283,
         "embedding_dim": 64,
         "num_layers": 3,
+    },
+    
+    # Diffusion LLM - Fast-dLLM (LLaDA backbone)
+    "GSAI-ML/LLaDA-8B-Instruct": {
+        "d_model": 4096,
+        "n_heads": 32,
+        "n_kv_heads": 32,
+        "n_layers": 32,
+        "mlp_hidden_size": 12288,
+        "vocab_size": 126464,
+        "embedding_size": 126464,
+        "mask_token_id": 126336,
+        "max_sequence_length": 4096,
+        "rope_theta": 500000.0,
+        "rms_norm_eps": 1e-5,
+        "weight_tying": False,
     },
 }
 
