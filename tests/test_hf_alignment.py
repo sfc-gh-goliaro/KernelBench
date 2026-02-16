@@ -57,6 +57,7 @@ from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from transformers import Qwen3VLForConditionalGeneration
 from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
 from transformers import RTDetrV2ForObjectDetection, AutoImageProcessor as RTDetrImageProcessor
+from transformers import ConvNextV2ForImageClassification
 import json
 import math
 import re
@@ -144,8 +145,17 @@ MODEL_TO_IMPLEMENTATION: Dict[str, str] = {
     "state-spaces/mamba-370m-hf": "KernelBench.level4.6_Mamba1",
     "state-spaces/mamba-130m-hf": "KernelBench.level4.6_Mamba1",
     # RT-DETR v2 (Object Detection)
-    "PekingU/rtdetr_v2_r18vd": "KernelBench.level4.24_RTDetrV2",
-    "PekingU/rtdetr_v2_r50vd": "KernelBench.level4.24_RTDetrV2",
+    "PekingU/rtdetr_v2_r18vd": "KernelBench.level4.25_RTDetrV2",
+    "PekingU/rtdetr_v2_r50vd": "KernelBench.level4.25_RTDetrV2",
+    # ConvNeXt V2 (Image Classification)
+    "facebook/convnextv2-atto-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-femto-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-pico-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-nano-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-tiny-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-base-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-large-1k-224": "KernelBench.level4.21_ConvNeXtV2",
+    "facebook/convnextv2-huge-1k-224": "KernelBench.level4.21_ConvNeXtV2",
 }
 
 
@@ -965,6 +975,35 @@ def copy_weights(hf_model, kb_model, num_layers: int, model_name: str = "") -> N
         kb_model.load_state_dict(kb_state)
         return
     
+    if _is_convnextv2_model(model_name):
+        explicit_mapping = _build_convnextv2_key_mapping(hf_state, kb_state)
+        copied = 0
+        skipped_buffers = 0
+        missing_in_hf = []
+        
+        for kb_key, kb_tensor in kb_state.items():
+            if kb_key in explicit_mapping:
+                hf_key = explicit_mapping[kb_key]
+                hf_tensor = hf_state[hf_key]
+                if kb_tensor.shape == hf_tensor.shape:
+                    kb_tensor.copy_(hf_tensor)
+                    copied += 1
+                else:
+                    missing_in_hf.append(f"{kb_key} (shape mismatch: KB={kb_tensor.shape} vs HF={hf_tensor.shape})")
+            else:
+                missing_in_hf.append(kb_key)
+        
+        if missing_in_hf:
+            print(f"  Warning: {len(missing_in_hf)} KB weights not found in HF model:")
+            for m in missing_in_hf[:10]:
+                print(f"    - {m}")
+            if len(missing_in_hf) > 10:
+                print(f"    ... and {len(missing_in_hf) - 10} more")
+        
+        print(f"  Copied {copied} weights, skipped {skipped_buffers} buffers")
+        kb_model.load_state_dict(kb_state)
+        return
+    
     # Default: Llama/Falcon/Mistral/BLOOM/Mamba style
     # Detect HF model prefix (e.g., "model." for Llama, "transformer." for Falcon, "backbone." for Mamba2)
     hf_prefix = ""
@@ -1071,6 +1110,50 @@ def _is_qwen3omni_model(model_name: str) -> bool:
 def _is_rtdetr_v2_model(model_name: str) -> bool:
     """Check if a model is an RT-DETR v2 object detection model."""
     return "rtdetr_v2" in model_name.lower() or "rtdetrv2" in model_name.lower()
+
+
+def _is_convnextv2_model(model_name: str) -> bool:
+    """Check if a model is a ConvNeXt V2 image classification model."""
+    return "convnextv2" in model_name.lower()
+
+
+def _create_kb_convnextv2_config(hf_config) -> dict:
+    """Create KernelBench config dict for ConvNeXt V2 models."""
+    return {
+        'num_channels': hf_config.num_channels,
+        'patch_size': hf_config.patch_size,
+        'hidden_sizes': list(hf_config.hidden_sizes),
+        'depths': list(hf_config.depths),
+        'num_labels': hf_config.num_labels,
+        'drop_path_rate': getattr(hf_config, 'drop_path_rate', 0.0),
+        'layer_norm_eps': getattr(hf_config, 'layer_norm_eps', 1e-6),
+        'image_size': hf_config.image_size,
+    }
+
+
+def _build_convnextv2_key_mapping(hf_state, kb_state) -> dict:
+    """Build explicit key mapping for ConvNeXt V2 models.
+    
+    HF ConvNextV2ForImageClassification uses 'convnextv2.' prefix for the backbone.
+    KB model structure mirrors HF without the prefix.
+    
+    HF: convnextv2.embeddings.patch_embeddings.weight -> KB: embeddings.patch_embeddings.weight
+    HF: convnextv2.encoder.stages.0.layers.0.dwconv.weight -> KB: encoder.stages.0.layers.0.dwconv.weight
+    HF: convnextv2.layernorm.weight -> KB: layernorm.weight
+    HF: classifier.weight -> KB: classifier.weight (no prefix)
+    """
+    mapping = {}  # kb_key -> hf_key
+    
+    for kb_key in kb_state.keys():
+        # Try with convnextv2. prefix for backbone keys
+        hf_key = 'convnextv2.' + kb_key
+        if hf_key in hf_state:
+            mapping[kb_key] = hf_key
+        elif kb_key in hf_state:
+            # classifier weights don't have convnextv2. prefix
+            mapping[kb_key] = kb_key
+    
+    return mapping
 
 
 def _create_kb_rtdetr_v2_config(hf_config) -> dict:
@@ -1509,6 +1592,9 @@ def create_kb_model_from_hf_config(hf_config, num_blocks: int = 8192):
     # Check if this is an RT-DETR v2 model
     if getattr(hf_config, 'model_type', None) == 'rt_detr_v2':
         return _create_kb_rtdetr_v2_config(hf_config)
+    # Check if this is a ConvNeXt V2 model
+    if getattr(hf_config, 'model_type', None) == 'convnextv2':
+        return _create_kb_convnextv2_config(hf_config)
     # Get rope_scaling if available (not used by BLOOM which uses ALiBi)
     rope_scaling = getattr(hf_config, 'rope_scaling', None)
     
@@ -1828,6 +1914,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     is_qwen3vl = _is_qwen3vl_model(model_name)
     is_qwen3omni = _is_qwen3omni_model(model_name)
     is_rtdetr_v2 = _is_rtdetr_v2_model(model_name)
+    is_convnextv2 = _is_convnextv2_model(model_name)
     
     # SSM models need snapshot_download for local path loading
     if is_ssm:
@@ -1855,7 +1942,7 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     rtdetr_v2_processor = None
     if is_rtdetr_v2:
         rtdetr_v2_processor = AutoImageProcessor.from_pretrained(model_name)
-    elif is_swinv2:
+    elif is_swinv2 or is_convnextv2:
         image_processor = AutoImageProcessor.from_pretrained(model_name)
     elif is_whisper:
         whisper_processor = WhisperProcessor.from_pretrained(model_name)
@@ -1898,6 +1985,8 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
         total_layers = hf_config.decoder_layers
     elif is_swinv2:
         # SwinV2 uses depths list, not a single num_layers
+        total_layers = sum(hf_config.depths)
+    elif is_convnextv2:
         total_layers = sum(hf_config.depths)
     elif is_t5:
         total_layers = hf_config.num_layers  # T5 uses num_layers
@@ -2013,6 +2102,27 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
             device_map=DEVICE,
         )
         hf_model.eval()
+    elif is_convnextv2:
+        if truncated:
+            orig_depths = list(hf_config.depths)
+            remaining = num_layers
+            new_depths = []
+            for d in orig_depths:
+                take = min(d, remaining)
+                new_depths.append(take)
+                remaining -= take
+                if remaining <= 0:
+                    break
+            while len(new_depths) < len(orig_depths):
+                new_depths.append(0)
+            hf_config.depths = new_depths
+        hf_model = ConvNextV2ForImageClassification.from_pretrained(
+            model_name,
+            config=hf_config,
+            torch_dtype=DTYPE,
+            device_map=DEVICE,
+        )
+        hf_model.eval()
     elif truncated:
         # Memory-efficient loading: use meta tensors + selective shard loading
         print(f"Using memory-efficient loading for {num_layers}/{total_layers} layers...")
@@ -2084,6 +2194,9 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     elif is_swinv2:
         if truncated:
             kb_config['depths'] = list(hf_config.depths)
+    elif is_convnextv2:
+        if truncated:
+            kb_config['depths'] = list(hf_config.depths)
     elif is_ssm:
         kb_config['num_hidden_layers'] = num_layers
     else:
@@ -2134,6 +2247,8 @@ def load_models(model_name: str, max_layers: Optional[int] = None):
     elif is_swinv2:
         print(f"Loaded: depths={kb_config['depths']}, embed_dim={kb_config['embed_dim']}, "
               f"num_heads={kb_config['num_heads']} (SwinV2)")
+    elif is_convnextv2:
+        print(f"Loaded: depths={kb_config['depths']}, hidden_sizes={kb_config['hidden_sizes']} (ConvNeXtV2)")
     elif is_ssm:
         heads_info = f"{kb_config.get('num_heads', 'N/A')} heads" if is_mamba2 else f"d_inner={kb_config.get('intermediate_size', 'N/A')}"
         print(f"Loaded: {num_layers}/{total_layers} layers, {kb_config['hidden_size']} hidden, "
@@ -2196,6 +2311,7 @@ def test_prefill_alignment(loaded_models):
     is_qwen3vl = _is_qwen3vl_model(model_name)
     is_qwen3omni = _is_qwen3omni_model(model_name)
     is_rtdetr_v2 = _is_rtdetr_v2_model(model_name)
+    is_convnextv2 = _is_convnextv2_model(model_name)
     
     layers_info = f" ({max_layers} layers)" if max_layers else ""
     print("\n" + "="*70)
@@ -2271,6 +2387,55 @@ def test_prefill_alignment(loaded_models):
                 
                 # KernelBench
                 kb_logits = kb_model(pixel_values)  # (1, num_labels)
+            
+            hf_flat = hf_logits.float()
+            kb_flat = kb_logits.float()
+            
+            abs_diff = (hf_flat - kb_flat).abs()
+            max_abs_diff = abs_diff.max().item()
+            mean_abs_diff = abs_diff.mean().item()
+            
+            denominator = torch.maximum(hf_flat.abs(), kb_flat.abs()) + 1e-8
+            rel_diff = abs_diff / denominator
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
+            
+            hf_top = hf_flat.argmax(dim=-1).item()
+            kb_top = kb_flat.argmax(dim=-1).item()
+            top_match = hf_top == kb_top
+            
+            mean_ok = mean_rel_diff < RTOL_MEAN
+            max_ok = max_rel_diff < RTOL_MAX
+            is_pass = top_match and mean_ok and max_ok
+            status = "PASS" if is_pass else "FAIL"
+            
+            img_w, img_h = pil_image.size
+            print(f"\n  [{i}] {status}: image ({img_w}x{img_h}, URL: ...{image_url[-20:]})")
+            print(f"      abs_diff: max={max_abs_diff:.2e}, mean={mean_abs_diff:.2e}")
+            print(f"      rel_diff: max={max_rel_diff:.2e}, mean={mean_rel_diff:.2e}")
+            print(f"      HF top: {hf_top} | KB top: {kb_top} (match={top_match})")
+            
+            assert top_match, f"Top predictions differ: HF={hf_top} vs KB={kb_top}"
+            assert mean_ok, f"Mean relative diff {mean_rel_diff:.2e} exceeds tolerance {RTOL_MEAN}"
+        
+        print("\n" + "-"*70)
+        print(f"All prefill tests passed for {model_name}!")
+        return
+    
+    if is_convnextv2:
+        # ConvNeXtV2: test with real images preprocessed by the HF image processor
+        assert image_processor is not None, "Image processor required for ConvNeXtV2"
+        test_images = _load_test_images()
+        print(f"  Loaded {len(test_images)} test images")
+        
+        for i, (pil_image, image_url) in enumerate(test_images):
+            inputs = image_processor(images=pil_image, return_tensors="pt")
+            pixel_values = inputs['pixel_values'].to(device=DEVICE, dtype=DTYPE)
+            
+            with torch.no_grad():
+                hf_out = hf_model(pixel_values=pixel_values)
+                hf_logits = hf_out.logits
+                kb_logits = kb_model(pixel_values)
             
             hf_flat = hf_logits.float()
             kb_flat = kb_logits.float()
@@ -3063,6 +3228,8 @@ def test_generation(loaded_models):
         pytest.skip("RT-DETR v2 is an object detection model, no generation test")
     if _is_swinv2_model(model_name):
         pytest.skip("SwinV2 is an image classification model, no generation test")
+    if _is_convnextv2_model(model_name):
+        pytest.skip("ConvNeXtV2 is an image classification model, no generation test")
     
     # Skip generation test for T5 (would need a different generation setup)
     if _is_t5_model(model_name):
@@ -3517,6 +3684,10 @@ def test_components(loaded_models):
     is_qwen3vl = _is_qwen3vl_model(model_name)
     is_qwen3omni = _is_qwen3omni_model(model_name)
     is_rtdetr_v2 = _is_rtdetr_v2_model(model_name)
+    is_convnextv2 = _is_convnextv2_model(model_name)
+    
+    if is_convnextv2:
+        pytest.skip("ConvNeXtV2 component tests not yet implemented (use test_prefill_alignment)")
     
     if is_rtdetr_v2:
         pytest.skip("RT-DETR v2 component tests not yet implemented (use test_prefill_alignment)")

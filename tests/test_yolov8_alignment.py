@@ -2,7 +2,7 @@
 YOLOv8n alignment tests: KernelBench vs ultralytics library.
 
 Tests end-to-end alignment between our KernelBench implementation
-(KernelBench/level4/23_YOLOv8.py) and the official ultralytics YOLO library,
+(KernelBench/level4/24_YOLOv8.py) and the official ultralytics YOLO library,
 using realistic images from scikit-image.
 
 Test structure:
@@ -78,7 +78,7 @@ DTYPE = torch.float32
 
 def _load_kb_module():
     """Load the KernelBench YOLOv8 module."""
-    return importlib.import_module("KernelBench.level4.23_YOLOv8")
+    return importlib.import_module("KernelBench.level4.24_YOLOv8")
 
 
 def _get_skimage_images() -> List[np.ndarray]:

@@ -23,5 +23,6 @@ diffusers/
 vllm/
 sglang/
 ultralytics/
+pytorch-image-models/
 test.py
 *.pt

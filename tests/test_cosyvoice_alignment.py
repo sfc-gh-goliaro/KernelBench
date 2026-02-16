@@ -2,7 +2,7 @@
 CosyVoice3 alignment tests: KernelBench vs original CosyVoice repository.
 
 Tests component-level and end-to-end alignment between our KernelBench
-implementation (KernelBench/level4/22_CosyVoice.py) and the original
+implementation (KernelBench/level4/23_CosyVoice.py) and the original
 CosyVoice repository (https://github.com/FunAudioLLM/CosyVoice).
 
 Test structure:
@@ -120,7 +120,7 @@ def _setup_cosyvoice_imports():
 
 def _load_kb_module():
     """Load the KernelBench CosyVoice module."""
-    return importlib.import_module("KernelBench.level4.22_CosyVoice")
+    return importlib.import_module("KernelBench.level4.23_CosyVoice")
 
 
 # ============================================================================
@@ -461,7 +461,7 @@ class TestFlowAlignment:
         ref_flow_sd = torch.load(flow_pt, map_location="cpu", weights_only=True)
 
         # Build KB flow model
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         CausalMaskedDiffWithDiT = kb_mod.CausalMaskedDiffWithDiT
         PreLookaheadLayer = kb_mod.PreLookaheadLayer
         CausalConditionalCFM = kb_mod.CausalConditionalCFM
@@ -579,7 +579,7 @@ class TestVocoderAlignment:
         ref_hift_sd = torch.load(hift_pt, map_location="cpu", weights_only=True)
 
         # Build KB vocoder
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         CausalHiFTGenerator = kb_mod.CausalHiFTGenerator
         DEFAULT_CONFIG = kb_mod.DEFAULT_CONFIG
 
@@ -661,7 +661,7 @@ class TestLLMAlignment:
         ref_llm_sd = torch.load(llm_pt, map_location="cpu", weights_only=True)
 
         # Build KB LLM
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         CosyVoice3LM = kb_mod.CosyVoice3LM
         DEFAULT_CONFIG = kb_mod.DEFAULT_CONFIG
 
@@ -789,7 +789,7 @@ def _build_all_models(model_dir):
     """
     _setup_cosyvoice_imports()
 
-    kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+    kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
     config = kb_mod.DEFAULT_CONFIG
 
     # ---- KB Flow ----
@@ -1221,7 +1221,7 @@ class TestComponentSmoke:
 
     def test_dit_forward(self):
         """Test DiT forward pass with random weights."""
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         DiT = kb_mod.DiT
 
         dit = DiT(
@@ -1251,7 +1251,7 @@ class TestComponentSmoke:
 
     def test_vocoder_forward(self):
         """Test vocoder forward pass with random weights."""
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         CausalHiFTGenerator = kb_mod.CausalHiFTGenerator
 
         hift = CausalHiFTGenerator(
@@ -1278,7 +1278,7 @@ class TestComponentSmoke:
 
     def test_flow_model_forward(self):
         """Test flow model forward pass with random weights."""
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         CausalMaskedDiffWithDiT = kb_mod.CausalMaskedDiffWithDiT
         PreLookaheadLayer = kb_mod.PreLookaheadLayer
         CausalConditionalCFM = kb_mod.CausalConditionalCFM
@@ -1342,7 +1342,7 @@ class TestComponentSmoke:
 
     def test_llm_forward(self):
         """Test LLM forward pass with random weights."""
-        kb_mod = importlib.import_module("KernelBench.level4.22_CosyVoice")
+        kb_mod = importlib.import_module("KernelBench.level4.23_CosyVoice")
         CosyVoice3LM = kb_mod.CosyVoice3LM
 
         llm = CosyVoice3LM(
