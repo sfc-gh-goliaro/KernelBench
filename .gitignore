@@ -24,5 +24,6 @@ vllm/
 sglang/
 ultralytics/
 pytorch-image-models/
+EAGLE/
 test.py
 *.pt

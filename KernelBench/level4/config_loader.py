@@ -646,6 +646,60 @@ HARDCODED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "density_mlp_layers": 2,
         "color_mlp_layers": 4,
     },
+    
+    # Recommendation - DLRMv2
+    "dlrmv2-small": {
+        "num_dense_features": 13,
+        "num_sparse_features": 26,
+        "sparse_feature_size": 16,
+        "vocab_sizes": [1000] * 26,
+        "bot_mlp_sizes": [13, 512, 256, 16],
+        "top_mlp_sizes": [367, 256, 1],
+        "interaction_op": "dot",
+    },
+    "dlrmv2-base": {
+        "num_dense_features": 13,
+        "num_sparse_features": 26,
+        "sparse_feature_size": 64,
+        "vocab_sizes": [
+            40000000, 39060, 17295, 7424, 20265, 3, 7122, 1543, 63,
+            40000000, 3067956, 405282, 10, 2209, 11938, 155, 4, 976,
+            14, 40000000, 40000000, 40000000, 590152, 12973, 108, 36,
+        ],
+        "bot_mlp_sizes": [13, 512, 256, 64],
+        "top_mlp_sizes": [415, 512, 256, 1],
+        "interaction_op": "dot",
+    },
+    "dlrmv2-large": {
+        "num_dense_features": 13,
+        "num_sparse_features": 26,
+        "sparse_feature_size": 128,
+        "vocab_sizes": [
+            40000000, 39060, 17295, 7424, 20265, 3, 7122, 1543, 63,
+            40000000, 3067956, 405282, 10, 2209, 11938, 155, 4, 976,
+            14, 40000000, 40000000, 40000000, 590152, 12973, 108, 36,
+        ],
+        "bot_mlp_sizes": [13, 512, 256, 128],
+        "top_mlp_sizes": [479, 1024, 512, 256, 1],
+        "interaction_op": "dot",
+    },
+    
+    # Recommendation - LightGCN
+    "lightgcn-movielens-small": {
+        "num_nodes": 3000,
+        "embedding_dim": 64,
+        "num_layers": 3,
+    },
+    "lightgcn-gowalla": {
+        "num_nodes": 107092,
+        "embedding_dim": 64,
+        "num_layers": 3,
+    },
+    "lightgcn-amazon-book": {
+        "num_nodes": 105283,
+        "embedding_dim": 64,
+        "num_layers": 3,
+    },
 }
 
 
